@@ -1,7 +1,7 @@
 # Volume Spike Indicator — Technical Specification
 
 **Project:** FX Tools — MT5 Custom Indicator  
-**Version:** 1.02  
+**Version:** 1.03  
 **Status:** Active  
 **Author:** Dercio Micas  
 **Last updated:** 2026-05-20
@@ -15,6 +15,7 @@
 | 1.00 | 2026-05-19 | Initial implementation |
 | 1.01 | 2026-05-19 | Alert fires only once per candle; removed `InpAlertClose` |
 | 1.02 | 2026-05-20 | Added optional time-of-day filter for alerts and arrows |
+| 1.03 | 2026-05-20 | Default arrow size reduced from 2 to 1 |
 
 ---
 
@@ -128,7 +129,7 @@ input bool                InpShowZones     = false;         // Draw highlight zo
 input color               InpBullColor     = clrDodgerBlue; // Bullish spike colour
 input color               InpBearColor     = clrOrangeRed;  // Bearish spike colour
 input color               InpZoneColor     = clrGold;       // Zone fill colour
-input int                 InpArrowSize     = 2;             // Arrow size (1–5)
+input int                 InpArrowSize     = 1;             // Arrow size (1–5)
 
 // ── Sub-Window ───────────────────────────────────────────────────────
 input color               InpBarBull       = clrSteelBlue;  // Normal bull bar

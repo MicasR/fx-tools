@@ -78,7 +78,7 @@ input bool               InpShowZones     = false;          // Draw highlight zo
 input color              InpBullColor     = clrDodgerBlue;  // Bullish spike colour
 input color              InpBearColor     = clrOrangeRed;   // Bearish spike colour
 input color              InpZoneColor     = clrGold;        // Zone fill colour
-input int                InpArrowSize     = 2;              // Arrow size  (1–5)
+input int                InpArrowSize     = 1;              // Arrow size  (1–5)
 
 input group              "── Sub-Window ──────────────────────────────";
 input color              InpBarBull       = clrSteelBlue;   // Normal bull bar
