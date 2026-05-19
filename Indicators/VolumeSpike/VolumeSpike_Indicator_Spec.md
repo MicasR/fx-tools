@@ -264,4 +264,28 @@ fx_tools/
 
 ---
 
+## 11. Roadmap / Future Improvements
+
+Items identified for future development, roughly in priority order.
+
+### Polish & UX
+- **Settings presets** — save/load input profiles per instrument or session (e.g. "Forex scalping", "Index daily")
+- **RVOL visual feedback** — display the computed session-average volume on the sub-window so the user can see what the spike is being compared against
+- **Cleaner arrow style** — explore custom bitmap arrows or larger Wingdings codes for a more premium look
+- **On-chart info label** — small corner label showing current method, threshold, and last spike time
+
+### Functionality
+- **Multi-pair / multi-timeframe scanner panel** — a separate EA or indicator window listing all watched symbols and their spike status in real time; biggest differentiator for commercial value
+- **Spike strength rating** — classify spikes as Weak / Medium / Strong based on how far above threshold they are, with colour coding to match
+- **Consecutive spike detection** — flag when two or more consecutive bars are spikes (sustained volume surge)
+- **Divergence signal** — alert when volume spikes but price barely moves (potential reversal setup)
+
+### Commercial readiness
+- **End-user guide** — trader-facing documentation separate from this spec; no code, just "how to use it"
+- **Demo video / GIF** — short screen recording showing the indicator in action across different instruments
+- **MQL5 Market listing** — product page copy, screenshots, and pricing strategy ($20–$50 range)
+- **Performance test** — verify no lag on 10-year M1 history before publishing
+
+---
+
 *End of specification.*
