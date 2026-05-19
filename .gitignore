@@ -1,1 +1,8 @@
 .claude/
+
+# MT5 compiled binaries
+*.ex5
+
+# MetaEditor backups and temp files
+*.bak
+*.tmp
