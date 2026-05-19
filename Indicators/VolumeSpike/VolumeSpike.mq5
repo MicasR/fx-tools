@@ -92,6 +92,13 @@ input bool               InpAlert         = true;           // Pop-up alert
 input bool               InpPush          = false;          // Push notification
 input bool               InpEmail         = false;          // Email alert
 
+input group              "── Time Filter ─────────────────────────────";
+input bool               InpTimeFilter    = false;          // Enable time-of-day filter
+input int                InpTimeFromHour  = 9;              // From – hour   (0-23)
+input int                InpTimeFromMin   = 0;              // From – minute (0-59)
+input int                InpTimeToHour    = 23;             // To   – hour   (0-23)
+input int                InpTimeToMin     = 59;             // To   – minute (0-59)
+
 //+------------------------------------------------------------------+
 //| Indicator buffers                                                |
 //+------------------------------------------------------------------+
@@ -302,7 +309,13 @@ int OnCalculate(const int      rates_total,
                       ? (i >= rates_total - MAX_OBJ_HIST)
                       : true;
 
-      if(is_spike && draw_obj)
+      // On H4+ the bar open time is not meaningful for intraday filtering;
+      // bypass so higher-TF spikes are always drawn regardless of the window.
+      bool in_window = (PeriodSeconds(_Period) >= PeriodSeconds(PERIOD_H4))
+                       ? true
+                       : IsInTimeWindow(time[i]);
+
+      if(is_spike && draw_obj && in_window)
       {
          string key = OBJ_PFX + (string)(int)time[i];
          if(InpShowArrows)
@@ -311,8 +324,9 @@ int OnCalculate(const int      rates_total,
             DrawZone (key + "Z", time[i], high[i], low[i]);
       }
 
-      // ── Alert – fires once per candle (first spike tick only) ────
-      if(is_spike && i == rates_total - 1 && time[i] != g_last_alert_bar)
+      // ── Alert – fires once per candle, only inside the time window ─
+      if(is_spike && i == rates_total - 1 && time[i] != g_last_alert_bar
+         && IsInTimeWindow(TimeCurrent()))
       {
          g_last_alert_bar = time[i];
          TriggerAlert(vol, ma_vol, z_score);
@@ -399,6 +413,27 @@ void DeleteAllObjects()
       if(StringFind(name, OBJ_PFX) == 0)
          ObjectDelete(0, name);
    }
+}
+
+//+------------------------------------------------------------------+
+//| Returns true if t falls inside the configured time window.       |
+//| Handles overnight ranges (e.g. 22:00 – 06:00).                  |
+//| Always returns true when InpTimeFilter is disabled.              |
+//+------------------------------------------------------------------+
+bool IsInTimeWindow(datetime t)
+{
+   if(!InpTimeFilter) return true;
+
+   MqlDateTime dt;
+   TimeToStruct(t, dt);
+   int cur  = dt.hour * 60 + dt.min;
+   int from = InpTimeFromHour * 60 + InpTimeFromMin;
+   int to   = InpTimeToHour  * 60 + InpTimeToMin;
+
+   if(from <= to)
+      return (cur >= from && cur <= to);
+   else   // overnight wrap – e.g. 22:00 → 06:00
+      return (cur >= from || cur <= to);
 }
 
 //+------------------------------------------------------------------+
