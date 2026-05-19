@@ -91,7 +91,6 @@ input group              "── Alerts ─────────────�
 input bool               InpAlert         = true;           // Pop-up alert
 input bool               InpPush          = false;          // Push notification
 input bool               InpEmail         = false;          // Email alert
-input bool               InpAlertClose    = true;           // Alert at bar close only
 
 //+------------------------------------------------------------------+
 //| Indicator buffers                                                |
@@ -108,8 +107,9 @@ double g_z[];         // [4] Z-score × MA  (scaled to be visible in the same wi
 #define OBJ_PFX       "VolumeSpike_"
 #define MAX_OBJ_HIST  500     // max past bars to materialise chart objects on first load
 
-double g_dvol[];      // double copy of tick_volume[], rebuilt each call
-int    g_min_bars;    // minimum bars required before calculation starts
+double   g_dvol[];          // double copy of tick_volume[], rebuilt each call
+int      g_min_bars;        // minimum bars required before calculation starts
+datetime g_last_alert_bar;  // open-time of the last bar that fired an alert
 
 //+------------------------------------------------------------------+
 //| OnInit                                                           |
@@ -311,10 +311,12 @@ int OnCalculate(const int      rates_total,
             DrawZone (key + "Z", time[i], high[i], low[i]);
       }
 
-      // ── Alert – fires on the most recent bar after it closes ─────
-      if(is_spike && i == rates_total - 1)
-         if(!InpAlertClose || prev_calculated > 0)
-            TriggerAlert(vol, ma_vol, z_score);
+      // ── Alert – fires once per candle (first spike tick only) ────
+      if(is_spike && i == rates_total - 1 && time[i] != g_last_alert_bar)
+      {
+         g_last_alert_bar = time[i];
+         TriggerAlert(vol, ma_vol, z_score);
+      }
    }
 
    return rates_total;
