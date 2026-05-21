@@ -201,15 +201,15 @@ int CountOpenTrades()
 //+------------------------------------------------------------------+
 //| Close all positions of a given type for this EA / symbol         |
 //+------------------------------------------------------------------+
-void CloseAllByType(POSITION_TYPE type)
+void CloseAllByType(ENUM_POSITION_TYPE type)
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
-      if(ticket == 0)                                                   continue;
-      if(PositionGetString(POSITION_SYMBOL)  != _Symbol)               continue;
-      if(PositionGetInteger(POSITION_MAGIC)  != (long)InpMagicNumber)  continue;
-      if((POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != type)     continue;
+      if(ticket == 0)                                                              continue;
+      if(PositionGetString(POSITION_SYMBOL)  != _Symbol)                          continue;
+      if(PositionGetInteger(POSITION_MAGIC)  != (long)InpMagicNumber)             continue;
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != type)           continue;
       g_trade.PositionClose(ticket);
    }
 }
