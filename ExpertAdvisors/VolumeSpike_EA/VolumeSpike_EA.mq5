@@ -77,7 +77,7 @@ int OnInit()
    g_trade.SetDeviationInPoints(InpDeviation);
 
    g_handle = iCustom(_Symbol, _Period,
-      "VolumeSpike\\VolumeSpike",
+      "VolumeSpike/VolumeSpike",
       // Detection
       (int)InpMethod, InpMAPeriod, (int)InpMAType,
       InpMultiplier, InpZThreshold,
