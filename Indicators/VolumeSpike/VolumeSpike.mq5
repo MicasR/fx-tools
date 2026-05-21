@@ -13,7 +13,7 @@
 //|    3 – Relative Volume / RVOL  (session-aware)                  |
 //+------------------------------------------------------------------+
 #property copyright    "Dercio Micas"
-#property version      "1.00"
+#property version      "1.04"
 #property description  "Volume Spike – four detection methods: StdDev · Z-Score · Percentile · RVOL"
 #property indicator_separate_window
 #property indicator_buffers  5
@@ -91,6 +91,11 @@ input group              "── Alerts ─────────────�
 input bool               InpAlert         = true;           // Pop-up alert
 input bool               InpPush          = false;          // Push notification
 input bool               InpEmail         = false;          // Email alert
+input bool               InpWhatsApp      = false;          // WhatsApp notification (Maytapi)
+input string             InpMaytapiProductId = "";          // Maytapi product ID
+input string             InpMaytapiPhoneId   = "";          // Maytapi phone ID
+input string             InpMaytapiKey       = "";          // Maytapi API key
+input string             InpWhatsAppTo       = "";          // Recipient number (+XXXXXXXXXXX)
 
 input group              "── Time Filter ─────────────────────────────";
 input bool               InpTimeFilter    = false;          // Enable time-of-day filter
@@ -112,7 +117,7 @@ double g_z[];         // [4] Z-score × MA  (scaled to be visible in the same wi
 //| Globals                                                          |
 //+------------------------------------------------------------------+
 #define OBJ_PFX       "VolumeSpike_"
-#define MAX_OBJ_HIST  500     // max past bars to materialise chart objects on first load
+#define MAX_OBJ_HIST  5000     // max past bars to materialise chart objects on first load
 
 double   g_dvol[];          // double copy of tick_volume[], rebuilt each call
 int      g_min_bars;        // minimum bars required before calculation starts
@@ -448,8 +453,45 @@ void TriggerAlert(double vol, double ma, double z)
       vol, ma, z,
       TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
 
-   if(InpAlert) Alert(msg);
-   if(InpPush)  SendNotification(msg);
-   if(InpEmail) SendMail("[VolumeSpike] " + _Symbol, msg);
+   if(InpAlert)   Alert(msg);
+   if(InpPush)    SendNotification(msg);
+   if(InpEmail)   SendMail("[VolumeSpike] " + _Symbol, msg);
+   SendWhatsApp(msg);
+}
+
+//+------------------------------------------------------------------+
+//| Send a WhatsApp message via the Maytapi REST API                 |
+//| Requires https://api.maytapi.com whitelisted in MT5 Options      |
+//+------------------------------------------------------------------+
+void SendWhatsApp(const string msg)
+{
+   if(!InpWhatsApp) return;
+   if(InpMaytapiProductId == "" || InpMaytapiPhoneId == "" ||
+      InpMaytapiKey == "" || InpWhatsAppTo == "") return;
+
+   string url = "https://api.maytapi.com/api/"
+                + InpMaytapiProductId + "/"
+                + InpMaytapiPhoneId  + "/sendMessage";
+
+   string headers = "Content-Type: application/json\r\nx-maytapi-key: " + InpMaytapiKey;
+
+   // Escape backslashes then double-quotes so the JSON body stays valid
+   string safe = msg;
+   StringReplace(safe, "\\", "\\\\");
+   StringReplace(safe, "\"", "\\\"");
+
+   string json = StringFormat(
+      "{\"to_number\":\"%s\",\"type\":\"text\",\"message\":\"%s\",\"text\":\"\"}",
+      InpWhatsAppTo, safe);
+
+   char   post[];
+   char   result[];
+   string result_headers;
+   StringToCharArray(json, post, 0, StringLen(json));
+
+   int res = WebRequest("POST", url, headers, 5000, post, result, result_headers);
+   if(res == -1)
+      Print("VolumeSpike | WhatsApp WebRequest error ", GetLastError(),
+            " – whitelist https://api.maytapi.com in Tools > Options > Expert Advisors");
 }
 //+------------------------------------------------------------------+

@@ -6,3 +6,6 @@
 # MetaEditor backups and temp files
 *.bak
 *.tmp
+
+# MT5 indicator/EA settings files (may contain API keys or credentials)
+*.set

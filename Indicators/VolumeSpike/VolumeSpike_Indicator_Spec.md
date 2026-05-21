@@ -1,10 +1,10 @@
 # Volume Spike Indicator — Technical Specification
 
 **Project:** FX Tools — MT5 Custom Indicator  
-**Version:** 1.03  
+**Version:** 1.04  
 **Status:** Active  
 **Author:** Dercio Micas  
-**Last updated:** 2026-05-20
+**Last updated:** 2026-05-21
 
 ---
 
@@ -16,6 +16,7 @@
 | 1.01 | 2026-05-19 | Alert fires only once per candle; removed `InpAlertClose` |
 | 1.02 | 2026-05-20 | Added optional time-of-day filter for alerts and arrows |
 | 1.03 | 2026-05-20 | Default arrow size reduced from 2 to 1 |
+| 1.04 | 2026-05-21 | WhatsApp notifications via Maytapi REST API |
 
 ---
 
@@ -139,9 +140,14 @@ input color               InpSpikeBear     = clrOrangeRed;  // Spike bear bar
 input bool                InpShowZScore    = false;         // Show Z-score line
 
 // ── Alerts ───────────────────────────────────────────────────────────
-input bool                InpAlert         = true;          // Pop-up alert
-input bool                InpPush          = false;         // Push notification
-input bool                InpEmail         = false;         // Email alert
+input bool                InpAlert            = true;          // Pop-up alert
+input bool                InpPush             = false;         // Push notification
+input bool                InpEmail            = false;         // Email alert
+input bool                InpWhatsApp         = false;         // WhatsApp notification (Maytapi)
+input string              InpMaytapiProductId = "";            // Maytapi product ID
+input string              InpMaytapiPhoneId   = "";            // Maytapi phone ID
+input string              InpMaytapiKey       = "";            // Maytapi API key
+input string              InpWhatsAppTo       = "";            // Recipient number (+XXXXXXXXXXX)
 
 // ── Time Filter ──────────────────────────────────────────────────────
 input bool                InpTimeFilter    = false;         // Enable time-of-day filter
@@ -182,6 +188,31 @@ When `InpTimeFilter = true`:
 Overnight ranges are supported (e.g. From `22:00` To `06:00`).
 
 > **Time reference:** All times are **MT5 broker server time**. If your broker is UTC+2 and you want a 09:00 local (UTC+1) window, set `InpTimeFromHour = 8`.
+
+### WhatsApp notifications (Maytapi)
+
+When `InpWhatsApp = true` the indicator sends a POST request to the Maytapi REST API on every alert. The same message string used for the pop-up alert is sent as the WhatsApp message body.
+
+**Required inputs:**
+
+| Input | Description |
+|-------|-------------|
+| `InpMaytapiProductId` | UUID from your Maytapi dashboard (part of the API URL) |
+| `InpMaytapiPhoneId` | Numeric phone/instance ID (part of the API URL) |
+| `InpMaytapiKey` | `x-maytapi-key` header value from your Maytapi dashboard |
+| `InpWhatsAppTo` | Recipient WhatsApp number in international format, e.g. `+351912345678` |
+
+If any of the four fields are empty, the function returns silently without making a request.
+
+**MT5 setup required:** `https://api.maytapi.com` must be whitelisted in **Tools → Options → Expert Advisors → Allow WebRequest for listed URL**. If the URL is not whitelisted, `WebRequest()` returns `-1` and an error is printed to the Experts log with the `GetLastError()` code.
+
+**Endpoint called:**
+```
+POST https://api.maytapi.com/api/{InpMaytapiProductId}/{InpMaytapiPhoneId}/sendMessage
+Headers: Content-Type: application/json
+         x-maytapi-key: {InpMaytapiKey}
+Body:    {"to_number":"{InpWhatsAppTo}","type":"text","message":"...","text":""}
+```
 
 ---
 
@@ -257,6 +288,8 @@ fx_tools/
 - [x] Spike arrows and zones drawn as chart objects on the price panel
 - [x] Alert fires at most once per candle regardless of tick rate
 - [x] Time-of-day filter correctly suppresses alerts and intraday arrows outside the window
+- [ ] WhatsApp message received on spike when Maytapi credentials are set and URL is whitelisted
+- [ ] No request is made when `InpWhatsApp = false` or any credential field is empty
 - [x] H4/D1/W1/MN: arrows always drawn; alert still respects time window
 - [x] Overnight time ranges (e.g. 22:00–06:00) handled correctly
 - [ ] No performance degradation on 10-year M1 history
