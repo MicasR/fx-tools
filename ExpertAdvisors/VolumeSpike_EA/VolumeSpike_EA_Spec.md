@@ -1,7 +1,7 @@
 # VolumeSpike EA — Technical Specification
 
 **Project:** FX Tools — MT5 Expert Advisor  
-**Version:** 1.00  
+**Version:** 1.01  
 **Status:** Development  
 **Author:** Dercio Micas  
 **Last updated:** 2026-05-21
@@ -13,6 +13,7 @@
 | Version | Date | Change |
 |---------|------|--------|
 | 1.00 | 2026-05-21 | Initial implementation |
+| 1.01 | 2026-05-21 | Embed detection logic; remove iCustom dependency (Strategy Tester compatibility) |
 
 ---
 
@@ -26,16 +27,11 @@ Design philosophy: keep the initial version minimal and backtestable. The indica
 
 ## 2. Signal Source
 
-The EA attaches to `VolumeSpike\VolumeSpike` (must be compiled and present in `MQL5/Indicators/`). It reads **buffer index 1** (`g_col`, the colour-index buffer) which encodes bar type as an integer double:
+The detection logic is **embedded directly in the EA** (mirrors `VolumeSpike.mq5`), making the EA fully self-contained. The indicator file is not required for backtesting or live trading — `VolumeSpike.mq5` remains the charting tool; the EA runs its own identical copy of the algorithm.
 
-| Value | Meaning | EA action |
-|-------|---------|-----------|
-| `0` | Normal bullish bar | — |
-| `1` | Normal bearish bar | — |
-| `2` | **Bullish spike** | Open BUY |
-| `3` | **Bearish spike** | Open SELL |
+A spike is declared when `is_spike = true` (detection method dependent) for a given bar. Direction is determined by `close >= open` (bullish) or `close < open` (bearish), exactly as in the indicator.
 
-Visual and alert inputs are passed as disabled to the indicator; only the detection and time-filter parameters are functionally active.
+This architecture was chosen after the MT5 Strategy Tester failed to load the indicator via `iCustom` when the indicator folder was a directory junction (error 4002).
 
 ---
 
