@@ -1,10 +1,10 @@
 # VolumeSpike EA — Technical Specification
 
 **Project:** FX Tools — MT5 Expert Advisor  
-**Version:** 1.01  
+**Version:** 1.02  
 **Status:** Development  
 **Author:** Dercio Micas  
-**Last updated:** 2026-05-21
+**Last updated:** 2026-05-22
 
 ---
 
@@ -14,6 +14,7 @@
 |---------|------|--------|
 | 1.00 | 2026-05-21 | Initial implementation |
 | 1.01 | 2026-05-21 | Embed detection logic; remove iCustom dependency (Strategy Tester compatibility) |
+| 1.02 | 2026-05-22 | Dynamic SL/TP: structure-based (candle high/low), ATR, and fixed modes; minimum SL floor; R:R take profit |
 
 ---
 
@@ -42,12 +43,16 @@ This architecture was chosen after the MT5 Strategy Tester failed to load the in
 On a BUY signal:
 1. Close all open SELL positions for this EA / symbol.
 2. Check total open trades against `InpMaxTrades`.
-3. If allowed, open a BUY at `Ask` with fixed SL and TP in points.
+3. Compute SL via `CalcSL(true, idx, Ask)` — skip trade if insufficient history.
+4. Compute TP via `CalcTP(true, Ask, sl, idx)` — skip trade if insufficient history.
+5. Open a BUY at `Ask` with the computed SL and TP.
 
 On a SELL signal:
 1. Close all open BUY positions for this EA / symbol.
 2. Check total open trades against `InpMaxTrades`.
-3. If allowed, open a SELL at `Bid` with fixed SL and TP in points.
+3. Compute SL via `CalcSL(false, idx, Bid)` — skip trade if insufficient history.
+4. Compute TP via `CalcTP(false, Bid, sl, idx)` — skip trade if insufficient history.
+5. Open a SELL at `Bid` with the computed SL and TP.
 
 ### 3.2 Exit
 
@@ -114,14 +119,44 @@ input int                   InpTimeToMin     = 59;               // To   – min
 
 // ── Trade ────────────────────────────────────────────────────────────
 input double                InpLotSize       = 0.01;             // Lot size
-input int                   InpSL            = 1000;             // Stop loss (points)
-input int                   InpTP            = 3000;             // Take profit (points)
 input int                   InpMaxTrades     = 3;                // Max open trades (-1 = unlimited)
 input int                   InpMaxSpread     = 50;               // Max spread in points (-1 = disabled)
 input long                  InpMagicNumber   = 20260521;         // Magic number
 input int                   InpDeviation     = 10;               // Max slippage (points)
 input bool                  InpUseBarClose   = true;             // true = bar close, false = tick
+
+// ── Stop Loss ─────────────────────────────────────────────────────────
+input ENUM_VS_SL_METHOD     InpSLMethod      = VS_SL_STRUCTURE;  // Stop loss method
+input int                   InpSLLookback    = 3;                // Structure: bars before spike to scan
+input int                   InpATRPeriod     = 14;               // ATR period (shared by SL and TP)
+input double                InpSLATRMult     = 1.5;              // ATR multiplier for SL
+input int                   InpSLFixed       = 1000;             // Fixed SL (points)
+input int                   InpSLMinPoints   = 200;              // Minimum SL floor (points)
+
+// ── Take Profit ───────────────────────────────────────────────────────
+input ENUM_VS_TP_METHOD     InpTPMethod      = VS_TP_RR;         // Take profit method
+input double                InpTPRR          = 2.0;              // R:R ratio
+input double                InpTPATRMult     = 3.0;              // ATR multiplier for TP
+input int                   InpTPFixed       = 3000;             // Fixed TP (points)
 ```
+
+### SL methods
+
+| Method | Description |
+|--------|-------------|
+| `VS_SL_STRUCTURE` | Scans `InpSLLookback` bars **before** the spike (excludes spike candle). For buys: lowest low. For sells: highest high. |
+| `VS_SL_ATR` | `entry ± ATR(InpATRPeriod) × InpSLATRMult` |
+| `VS_SL_FIXED` | `entry ± InpSLFixed × point` |
+
+`InpSLMinPoints` and the broker's `SYMBOL_TRADE_STOPS_LEVEL` are always applied as a floor — the larger of the two wins.
+
+### TP methods
+
+| Method | Description |
+|--------|-------------|
+| `VS_TP_RR` | `TP_distance = SL_distance × InpTPRR`. Scales with the computed SL. |
+| `VS_TP_ATR` | `entry ± ATR(InpATRPeriod) × InpTPATRMult` |
+| `VS_TP_FIXED` | `entry ± InpTPFixed × point` |
 
 ---
 
@@ -129,7 +164,6 @@ input bool                  InpUseBarClose   = true;             // true = bar c
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `g_handle` | `int` | Indicator handle returned by `iCustom` |
 | `g_last_bar` | `datetime` | Open time of the last processed bar (bar-close mode guard) |
 | `g_last_buy_bar` | `datetime` | Open time of the bar that last triggered a BUY |
 | `g_last_sell_bar` | `datetime` | Open time of the bar that last triggered a SELL |
@@ -143,10 +177,6 @@ input bool                  InpUseBarClose   = true;             // true = bar c
 OnInit:
     g_trade.SetMagicNumber(InpMagicNumber)
     g_trade.SetDeviation(InpDeviation)
-    g_handle = iCustom(symbol, period, "VolumeSpike\VolumeSpike",
-                       detection_params..., visuals_off, alerts_off,
-                       time_filter_params...)
-    IF g_handle == INVALID_HANDLE: return INIT_FAILED
 
 OnTick:
     IF InpUseBarClose:
@@ -157,22 +187,25 @@ OnTick:
     IF InpMaxSpread != -1 AND spread > InpMaxSpread: return
 
     idx = InpUseBarClose ? 1 : 0
-    signal = CopyBuffer(g_handle, 1, idx, 1)
+    DetectSpike(idx) → is_spike, bullish
+    IF NOT is_spike: return
     signal_bar = iTime(idx)
 
-    IF signal == 2 (bull spike):
-        IF signal_bar == g_last_buy_bar: return   // already acted
-        g_last_buy_bar = signal_bar
+    IF bullish spike AND signal_bar != g_last_buy_bar:
         CloseAllByType(SELL)
         IF MaxTrades == -1 OR CountOpenTrades() < MaxTrades:
-            BUY at Ask, SL = Ask - InpSL*point, TP = Ask + InpTP*point
+            sl = CalcSL(buy=true,  idx, Ask);  IF sl == 0: return
+            tp = CalcTP(buy=true,  Ask, sl, idx); IF tp == 0: return
+            g_last_buy_bar = signal_bar
+            BUY at Ask with sl, tp
 
-    IF signal == 3 (bear spike):
-        IF signal_bar == g_last_sell_bar: return
-        g_last_sell_bar = signal_bar
+    IF bearish spike AND signal_bar != g_last_sell_bar:
         CloseAllByType(BUY)
         IF MaxTrades == -1 OR CountOpenTrades() < MaxTrades:
-            SELL at Bid, SL = Bid + InpSL*point, TP = Bid - InpTP*point
+            sl = CalcSL(buy=false, idx, Bid);  IF sl == 0: return
+            tp = CalcTP(buy=false, Bid, sl, idx); IF tp == 0: return
+            g_last_sell_bar = signal_bar
+            SELL at Bid with sl, tp
 ```
 
 ---
@@ -208,7 +241,13 @@ fx_tools/
 - [ ] Time filter correctly blocks trades outside the configured window
 - [ ] Overnight time ranges (e.g. 22:00–06:00) handled correctly
 - [ ] No duplicate trades on the same spike bar in either timing mode
-- [ ] SL and TP placed correctly in points for both BUY and SELL
+- [ ] Structure SL places stop below lowest low (buy) / above highest high (sell) of N candles before spike
+- [ ] ATR SL places stop at entry ± ATR × multiplier
+- [ ] Fixed SL places stop at entry ± points
+- [ ] Minimum SL floor (`InpSLMinPoints`) is always respected, broker stop level honoured
+- [ ] R:R TP scales correctly with the computed SL distance
+- [ ] ATR TP and Fixed TP produce correct prices for both BUY and SELL
+- [ ] Trade skipped gracefully when insufficient history for SL/TP calculation
 - [ ] Backtester runs cleanly with no off-quotes or invalid price errors
 - [ ] Confirmed working on Forex, Indices, and Crypto instruments
 
@@ -224,7 +263,6 @@ Items identified for future development, roughly in priority order.
 - **Walk-forward analysis** — split history into in-sample / out-of-sample periods to detect overfitting early
 
 ### Risk Management
-- **ATR-based SL/TP** — replace fixed-point SL/TP with a multiple of ATR to adapt to instrument volatility
 - **Account equity risk sizing** — calculate lot size as a percentage of account equity (e.g. 1% risk per trade) instead of a fixed lot
 - **Trailing stop** — follow price after a certain number of points in profit
 - **Break-even stop** — move SL to entry once TP is 50% reached

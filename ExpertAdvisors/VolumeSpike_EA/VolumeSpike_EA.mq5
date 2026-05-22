@@ -7,7 +7,7 @@
 //|  EA is fully self-contained for the Strategy Tester.            |
 //+------------------------------------------------------------------+
 #property copyright "Dercio Micas"
-#property version   "1.01"
+#property version   "1.02"
 
 #include <Trade\Trade.mqh>
 
@@ -20,6 +20,20 @@ enum ENUM_VS_DETECT_METHOD
    VS_METHOD_ZSCORE     = 1,   // Z-Score Normalisation
    VS_METHOD_PERCENTILE = 2,   // Percentile Rank
    VS_METHOD_RVOL       = 3    // Relative Volume – session-aware
+};
+
+enum ENUM_VS_SL_METHOD
+{
+   VS_SL_STRUCTURE = 0,   // Structure – candle high/low before spike
+   VS_SL_ATR       = 1,   // ATR × multiplier
+   VS_SL_FIXED     = 2    // Fixed points
+};
+
+enum ENUM_VS_TP_METHOD
+{
+   VS_TP_RR    = 0,   // Risk:Reward ratio
+   VS_TP_ATR   = 1,   // ATR × multiplier
+   VS_TP_FIXED = 2    // Fixed points
 };
 
 //+------------------------------------------------------------------+
@@ -45,13 +59,25 @@ input int                   InpTimeToMin     = 59;               // To   – min
 
 input group                 "── Trade ───────────────────────────────────";
 input double                InpLotSize       = 0.01;             // Lot size
-input int                   InpSL            = 1000;             // Stop loss (points)
-input int                   InpTP            = 3000;             // Take profit (points)
 input int                   InpMaxTrades     = 3;                // Max open trades (-1 = unlimited)
 input int                   InpMaxSpread     = 50;               // Max spread in points (-1 = disabled)
 input long                  InpMagicNumber   = 20260521;         // Magic number
 input int                   InpDeviation     = 10;               // Max slippage (points)
 input bool                  InpUseBarClose   = true;             // true = wait for bar close, false = act on tick
+
+input group                 "── Stop Loss ────────────────────────────────";
+input ENUM_VS_SL_METHOD     InpSLMethod      = VS_SL_STRUCTURE;  // Stop loss method
+input int                   InpSLLookback    = 3;                // Structure: bars before spike to scan
+input int                   InpATRPeriod     = 14;               // ATR period (shared by SL and TP)
+input double                InpSLATRMult     = 1.5;              // ATR multiplier for SL
+input int                   InpSLFixed       = 1000;             // Fixed SL (points)
+input int                   InpSLMinPoints   = 200;              // Minimum SL floor (points)
+
+input group                 "── Take Profit ──────────────────────────────";
+input ENUM_VS_TP_METHOD     InpTPMethod      = VS_TP_RR;         // Take profit method
+input double                InpTPRR          = 2.0;              // R:R ratio
+input double                InpTPATRMult     = 3.0;              // ATR multiplier for TP
+input int                   InpTPFixed       = 3000;             // Fixed TP (points)
 
 //+------------------------------------------------------------------+
 //| Globals                                                          |
@@ -102,20 +128,25 @@ void OnTick()
    if(sell_signal) CloseAllByType(POSITION_TYPE_BUY);
    if(InpMaxTrades != -1 && CountOpenTrades() >= InpMaxTrades) return;
 
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    if(buy_signal)
    {
-      g_last_buy_bar   = signal_bar;
-      double price     = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      g_trade.Buy(InpLotSize, _Symbol, price,
-                  price - InpSL * point, price + InpTP * point);
+      double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double sl    = CalcSL(true, idx, price);
+      if(sl <= 0.0) return;
+      double tp    = CalcTP(true, price, sl, idx);
+      if(tp <= 0.0) return;
+      g_last_buy_bar = signal_bar;
+      g_trade.Buy(InpLotSize, _Symbol, price, sl, tp);
    }
    else
    {
-      g_last_sell_bar  = signal_bar;
-      double price     = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      g_trade.Sell(InpLotSize, _Symbol, price,
-                   price + InpSL * point, price - InpTP * point);
+      double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double sl    = CalcSL(false, idx, price);
+      if(sl <= 0.0) return;
+      double tp    = CalcTP(false, price, sl, idx);
+      if(tp <= 0.0) return;
+      g_last_sell_bar = signal_bar;
+      g_trade.Sell(InpLotSize, _Symbol, price, sl, tp);
    }
 }
 
@@ -296,6 +327,104 @@ void CloseAllByType(ENUM_POSITION_TYPE type)
       if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != type) continue;
       g_trade.PositionClose(ticket);
    }
+}
+
+//+------------------------------------------------------------------+
+//| Simple ATR (SMA of TR) over InpATRPeriod bars ending at idx.   |
+//+------------------------------------------------------------------+
+double CalcATR(int idx)
+{
+   int needed = idx + InpATRPeriod + 1;
+   double high[], low[], close[];
+   ArraySetAsSeries(high,  true);
+   ArraySetAsSeries(low,   true);
+   ArraySetAsSeries(close, true);
+   if(CopyHigh (_Symbol, _Period, 0, needed, high)  < needed) return 0.0;
+   if(CopyLow  (_Symbol, _Period, 0, needed, low)   < needed) return 0.0;
+   if(CopyClose(_Symbol, _Period, 0, needed, close) < needed) return 0.0;
+
+   double sum = 0.0;
+   for(int i = 0; i < InpATRPeriod; i++)
+   {
+      int j  = idx + i;
+      double tr = high[j] - low[j];
+      tr = MathMax(tr, MathAbs(high[j]  - close[j + 1]));
+      tr = MathMax(tr, MathAbs(low[j]   - close[j + 1]));
+      sum += tr;
+   }
+   return sum / InpATRPeriod;
+}
+
+//+------------------------------------------------------------------+
+//| Compute stop loss price. Returns 0.0 on insufficient history.   |
+//+------------------------------------------------------------------+
+double CalcSL(bool buy, int idx, double entry)
+{
+   double point   = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double sl      = 0.0;
+
+   if(InpSLMethod == VS_SL_STRUCTURE)
+   {
+      double buf[];
+      ArraySetAsSeries(buf, true);
+      if(buy)
+      {
+         if(CopyLow(_Symbol, _Period, idx + 1, InpSLLookback, buf) < InpSLLookback) return 0.0;
+         sl = buf[0];
+         for(int i = 1; i < InpSLLookback; i++) sl = MathMin(sl, buf[i]);
+      }
+      else
+      {
+         if(CopyHigh(_Symbol, _Period, idx + 1, InpSLLookback, buf) < InpSLLookback) return 0.0;
+         sl = buf[0];
+         for(int i = 1; i < InpSLLookback; i++) sl = MathMax(sl, buf[i]);
+      }
+   }
+   else if(InpSLMethod == VS_SL_ATR)
+   {
+      double atr = CalcATR(idx);
+      if(atr <= 0.0) return 0.0;
+      sl = buy ? entry - InpSLATRMult * atr : entry + InpSLATRMult * atr;
+   }
+   else // VS_SL_FIXED
+   {
+      sl = buy ? entry - InpSLFixed * point : entry + InpSLFixed * point;
+   }
+
+   // Apply minimum SL floor (user setting and broker stop level)
+   double broker_min = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+   double min_dist   = MathMax(InpSLMinPoints * point, broker_min);
+   if(buy  && entry - sl < min_dist) sl = entry - min_dist;
+   if(!buy && sl - entry < min_dist) sl = entry + min_dist;
+
+   return NormalizeDouble(sl, _Digits);
+}
+
+//+------------------------------------------------------------------+
+//| Compute take profit price. Returns 0.0 on insufficient history. |
+//+------------------------------------------------------------------+
+double CalcTP(bool buy, double entry, double sl, int idx)
+{
+   double point   = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double sl_dist = MathAbs(entry - sl);
+   double tp      = 0.0;
+
+   if(InpTPMethod == VS_TP_RR)
+   {
+      tp = buy ? entry + sl_dist * InpTPRR : entry - sl_dist * InpTPRR;
+   }
+   else if(InpTPMethod == VS_TP_ATR)
+   {
+      double atr = CalcATR(idx);
+      if(atr <= 0.0) return 0.0;
+      tp = buy ? entry + InpTPATRMult * atr : entry - InpTPATRMult * atr;
+   }
+   else // VS_TP_FIXED
+   {
+      tp = buy ? entry + InpTPFixed * point : entry - InpTPFixed * point;
+   }
+
+   return NormalizeDouble(tp, _Digits);
 }
 
 //+------------------------------------------------------------------+
