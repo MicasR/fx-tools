@@ -7,7 +7,7 @@
 //|  EA is fully self-contained for the Strategy Tester.            |
 //+------------------------------------------------------------------+
 #property copyright "Dercio Micas"
-#property version   "1.02"
+#property version   "1.03"
 
 #include <Trade\Trade.mqh>
 
@@ -67,7 +67,8 @@ input bool                  InpUseBarClose   = true;             // true = wait 
 
 input group                 "── Stop Loss ────────────────────────────────";
 input ENUM_VS_SL_METHOD     InpSLMethod      = VS_SL_STRUCTURE;  // Stop loss method
-input int                   InpSLLookback    = 3;                // Structure: bars before spike to scan
+input int                   InpSLLookback    = 3;                // Structure: bars to scan
+input bool                  InpSLIncludeSpike = false;           // Structure: include spike candle in scan
 input int                   InpATRPeriod     = 14;               // ATR period (shared by SL and TP)
 input double                InpSLATRMult     = 1.5;              // ATR multiplier for SL
 input int                   InpSLFixed       = 1000;             // Fixed SL (points)
@@ -367,15 +368,16 @@ double CalcSL(bool buy, int idx, double entry)
    {
       double buf[];
       ArraySetAsSeries(buf, true);
+      int from = InpSLIncludeSpike ? idx : idx + 1;
       if(buy)
       {
-         if(CopyLow(_Symbol, _Period, idx + 1, InpSLLookback, buf) < InpSLLookback) return 0.0;
+         if(CopyLow(_Symbol, _Period, from, InpSLLookback, buf) < InpSLLookback) return 0.0;
          sl = buf[0];
          for(int i = 1; i < InpSLLookback; i++) sl = MathMin(sl, buf[i]);
       }
       else
       {
-         if(CopyHigh(_Symbol, _Period, idx + 1, InpSLLookback, buf) < InpSLLookback) return 0.0;
+         if(CopyHigh(_Symbol, _Period, from, InpSLLookback, buf) < InpSLLookback) return 0.0;
          sl = buf[0];
          for(int i = 1; i < InpSLLookback; i++) sl = MathMax(sl, buf[i]);
       }

@@ -1,7 +1,7 @@
 # VolumeSpike EA — Technical Specification
 
 **Project:** FX Tools — MT5 Expert Advisor  
-**Version:** 1.02  
+**Version:** 1.03  
 **Status:** Development  
 **Author:** Dercio Micas  
 **Last updated:** 2026-05-22
@@ -15,6 +15,7 @@
 | 1.00 | 2026-05-21 | Initial implementation |
 | 1.01 | 2026-05-21 | Embed detection logic; remove iCustom dependency (Strategy Tester compatibility) |
 | 1.02 | 2026-05-22 | Dynamic SL/TP: structure-based (candle high/low), ATR, and fixed modes; minimum SL floor; R:R take profit |
+| 1.03 | 2026-05-22 | Structure SL: add `InpSLIncludeSpike` option to include spike candle in high/low scan |
 
 ---
 
@@ -127,7 +128,8 @@ input bool                  InpUseBarClose   = true;             // true = bar c
 
 // ── Stop Loss ─────────────────────────────────────────────────────────
 input ENUM_VS_SL_METHOD     InpSLMethod      = VS_SL_STRUCTURE;  // Stop loss method
-input int                   InpSLLookback    = 3;                // Structure: bars before spike to scan
+input int                   InpSLLookback    = 3;                // Structure: bars to scan
+input bool                  InpSLIncludeSpike = false;           // Structure: include spike candle in scan
 input int                   InpATRPeriod     = 14;               // ATR period (shared by SL and TP)
 input double                InpSLATRMult     = 1.5;              // ATR multiplier for SL
 input int                   InpSLFixed       = 1000;             // Fixed SL (points)
@@ -144,7 +146,7 @@ input int                   InpTPFixed       = 3000;             // Fixed TP (po
 
 | Method | Description |
 |--------|-------------|
-| `VS_SL_STRUCTURE` | Scans `InpSLLookback` bars **before** the spike (excludes spike candle). For buys: lowest low. For sells: highest high. |
+| `VS_SL_STRUCTURE` | Scans `InpSLLookback` bars for the lowest low (buy) or highest high (sell). `InpSLIncludeSpike = false` starts from the bar before the spike; `true` includes the spike candle itself. |
 | `VS_SL_ATR` | `entry ± ATR(InpATRPeriod) × InpSLATRMult` |
 | `VS_SL_FIXED` | `entry ± InpSLFixed × point` |
 
