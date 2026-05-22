@@ -1,7 +1,7 @@
 # VolumeSpike EA — Technical Specification
 
 **Project:** FX Tools — MT5 Expert Advisor  
-**Version:** 1.03  
+**Version:** 1.04  
 **Status:** Development  
 **Author:** Dercio Micas  
 **Last updated:** 2026-05-22
@@ -16,6 +16,7 @@
 | 1.01 | 2026-05-21 | Embed detection logic; remove iCustom dependency (Strategy Tester compatibility) |
 | 1.02 | 2026-05-22 | Dynamic SL/TP: structure-based (candle high/low), ATR, and fixed modes; minimum SL floor; R:R take profit |
 | 1.03 | 2026-05-22 | Structure SL: add `InpSLIncludeSpike` option to include spike candle in high/low scan |
+| 1.04 | 2026-05-22 | Remove contrarian-signal trade closure; opposite positions are no longer closed on a new signal |
 
 ---
 
@@ -42,23 +43,20 @@ This architecture was chosen after the MT5 Strategy Tester failed to load the in
 ### 3.1 Entry
 
 On a BUY signal:
-1. Close all open SELL positions for this EA / symbol.
-2. Check total open trades against `InpMaxTrades`.
-3. Compute SL via `CalcSL(true, idx, Ask)` — skip trade if insufficient history.
-4. Compute TP via `CalcTP(true, Ask, sl, idx)` — skip trade if insufficient history.
-5. Open a BUY at `Ask` with the computed SL and TP.
+1. Check total open trades against `InpMaxTrades`.
+2. Compute SL via `CalcSL(true, idx, Ask)` — skip trade if insufficient history.
+3. Compute TP via `CalcTP(true, Ask, sl, idx)` — skip trade if insufficient history.
+4. Open a BUY at `Ask` with the computed SL and TP.
 
 On a SELL signal:
-1. Close all open BUY positions for this EA / symbol.
-2. Check total open trades against `InpMaxTrades`.
-3. Compute SL via `CalcSL(false, idx, Bid)` — skip trade if insufficient history.
-4. Compute TP via `CalcTP(false, Bid, sl, idx)` — skip trade if insufficient history.
-5. Open a SELL at `Bid` with the computed SL and TP.
+1. Check total open trades against `InpMaxTrades`.
+2. Compute SL via `CalcSL(false, idx, Bid)` — skip trade if insufficient history.
+3. Compute TP via `CalcTP(false, Bid, sl, idx)` — skip trade if insufficient history.
+4. Open a SELL at `Bid` with the computed SL and TP.
 
 ### 3.2 Exit
 
-Positions are closed by one of three events:
-- **Contrary signal** — a spike of the opposite direction closes all positions of the prior type before the new trade is opened.
+Positions are closed by one of two events:
 - **Take profit hit** — MT5 closes the position automatically.
 - **Stop loss hit** — MT5 closes the position automatically.
 

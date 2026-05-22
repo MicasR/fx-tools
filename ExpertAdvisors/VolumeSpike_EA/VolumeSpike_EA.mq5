@@ -7,7 +7,7 @@
 //|  EA is fully self-contained for the Strategy Tester.            |
 //+------------------------------------------------------------------+
 #property copyright "Dercio Micas"
-#property version   "1.03"
+#property version   "1.04"
 
 #include <Trade\Trade.mqh>
 
@@ -125,8 +125,6 @@ void OnTick()
    if(buy_signal  && signal_bar == g_last_buy_bar)  return;
    if(sell_signal && signal_bar == g_last_sell_bar) return;
 
-   if(buy_signal)  CloseAllByType(POSITION_TYPE_SELL);
-   if(sell_signal) CloseAllByType(POSITION_TYPE_BUY);
    if(InpMaxTrades != -1 && CountOpenTrades() >= InpMaxTrades) return;
 
    if(buy_signal)
