@@ -1,7 +1,7 @@
 # Volume V-Pattern Indicator — Technical Specification
 
 **Project:** FX Tools — MT5 Custom Indicator  
-**Version:** 1.01  
+**Version:** 2.00  
 **Status:** Active  
 **Author:** Dercio Micas  
 **Last updated:** 2026-06-08
@@ -13,48 +13,57 @@
 | Version | Date | Change |
 |---------|------|--------|
 | 1.00 | 2026-06-08 | Initial implementation — V-pattern in the volume z-score |
-| 1.01 | 2026-06-08 | Selectable source line (`InpSource`); plot only that single line; rise leg expressed as a percentage (`InpRisePct`) so it is scale-independent across sources |
+| 1.01 | 2026-06-08 | Selectable source line; plotted only that single line; rise leg as a percentage |
+| 2.00 | 2026-06-08 | **Re-forked from VolumeSpike.** Sub-window analytics now IDENTICAL to VolumeSpike (same histogram, MA, threshold, z-score lines and inputs). The ONLY change vs VolumeSpike is the price-chart signal: arrows/zones fire on a V-pattern in the selected method's line instead of a level cross. Added `METHOD_THRESHOLD` and `InpRisePct`. |
 
 ---
 
-## 1. Overview
+## 1. Overview & Design Intent
 
-A MetaTrader 5 custom indicator inspired by **VolumeSpike**, but signalling on a
-different idea. VolumeSpike is *level*-based: it fires when volume is **high**
-relative to its statistical norm. VolumeVPattern is *shape*-based: it fires when
-a chosen **volume-derived line** traces a **V** across three consecutive bars —
-the line drops into a short trough and then **rises sharply** back out.
+VolumeVPattern is a **fork of VolumeSpike** built for direct, apples-to-apples
+comparison. Loaded with the same settings, the two indicators produce an
+**identical sub-window** — same colour-coded histogram, same MA, threshold and
+z-score lines, all driven by the same `is_spike` logic and the same inputs.
 
-The trader chooses **one source line** (`InpSource`). That single line is the
-only thing plotted in the sub-window (it auto-scales to its own range), and the V
-is detected on it. This mirrors how the idea was found: by watching the dashed
-`Threshold` line on VolumeSpike trace a V.
+The **only behavioural difference** is how the price-chart signal is produced:
 
----
+- **VolumeSpike** marks a bar when volume **crosses a level** (StdDev / Z / Pct / RVOL threshold).
+- **VolumeVPattern** marks a bar when the **selected method's line traces a V** —
+  a drop into a trough followed by a sharp rise out.
 
-## 2. The Source Line (`InpSource`)
+This means a trader can run both indicators side by side and the *only* visible
+difference on the chart is **where the arrows appear**.
 
-Exactly one line is computed, plotted, and tested. All four are derived from the
-same rolling MA and population StdDev of volume over `InpZPeriod` bars:
-
-| `InpSource` | Line | Formula | Units |
-|-------------|------|---------|-------|
-| **Threshold** *(default)* | the VolumeSpike dashed line | `MA + InpMultiplier × StdDev` | volume |
-| Z-Score | per-bar extremity | `(Volume − MA) / StdDev` | σ |
-| MA Volume | the average | `MA(Volume)` | volume |
-| Volume | raw bars | `Volume` | volume |
-
-Because only one line is drawn, the sub-window auto-scales to it — no unit
-juggling, no scaling hacks. The line is plotted with `DRAW_COLOR_LINE` and tinted
-at the signal bar (green = buy, red = sell by default).
+> **Note:** the threshold-style parameters (`InpMultiplier`, `InpZThreshold`,
+> `InpPctCutoff`, `InpRvolThreshold`) still drive the histogram colouring and the
+> threshold line exactly as in VolumeSpike, but they **no longer gate the signal**
+> — the V shape plus `InpRisePct` decides that now.
 
 ---
 
-## 3. Detection Logic
+## 2. The Source Line per Method
 
-Let `s[]` be the chosen source series. Using MT5 series indexing (`[0]` = current
-forming bar, `[1]` = last closed bar), the indicator treats **C1 = `[1]`** as the
-*rise bar*, **C2 = `[2]`** as the *trough*, and **C3 = `[3]`** as the *pre-drop*:
+`InpMethod` selects both the histogram colouring (as in VolumeSpike) **and** which
+continuous line the V is detected on:
+
+| `InpMethod` | Histogram `is_spike` (unchanged) | V line `s[]` |
+|-------------|----------------------------------|--------------|
+| StdDev | `vol > MA + Mult·StdDev` | z-score `(vol−MA)/std` |
+| Z-Score | `z > InpZThreshold` | z-score `(vol−MA)/std` |
+| Percentile | `rank > InpPctCutoff` | percentile rank (0–100) |
+| RVOL | `rvol > InpRvolThreshold` | RVOL ratio `vol / session-avg` |
+| **Threshold** *(new)* | `vol > MA + Mult·StdDev` (same as StdDev) | `MA + Mult·StdDev` (the dashed line) |
+
+StdDev and Z-Score share the same z-score line, so their V signals are identical
+(they differ only in how VolumeSpike's histogram is coloured).
+
+---
+
+## 3. Detection Logic (the signal change)
+
+Let `s[]` be the chosen method's line. Using MT5 series indexing (`[0]` = current
+forming bar, `[1]` = last closed bar), **C1 = `[1]`** is the *rise bar*,
+**C2 = `[2]`** the *trough*, **C3 = `[3]`** the *pre-drop*:
 
 ```
 Signal when ALL hold:
@@ -63,155 +72,136 @@ Signal when ALL hold:
    (s[1] − s[2]) / |s[2]| >= InpRisePct rise leg steep enough  (percentage)
 ```
 
-`s[3] > s[2]` and `s[1] > s[2]` together make **C2 a strict local minimum** — the
-bottom of the V. The rise leg is measured as a **fraction of the trough's
-magnitude**, so the *same* `InpRisePct` works regardless of which source line (and
-its scale) is selected. `|s[2]|` is floored at `1e-10` to avoid division blow-ups
-near zero.
+`s[3] > s[2]` and `s[1] > s[2]` make **C2 a strict local minimum**. The rise leg
+is a **fraction of the trough's magnitude**, so the same `InpRisePct` works across
+all method lines regardless of scale. `|s[2]|` is floored at `1e-10`.
 
 ```
-  selected source line
+  selected method's line
 
    s[3] ●                       ● s[1]   ← rise leg ≥ InpRisePct
          \                     /
           \                   /
            ● s[2]  (trough = strict local minimum)
 
-   → arrow on C1, direction from C1's candle colour, enter at C0 open
+   → arrow/zone on C1, direction from C1's candle colour, enter at C0 open
 ```
 
-### 3.1 Direction
-
-| C1 candle | Signal | Arrow | Line tint |
-|-----------|--------|-------|-----------|
-| Bullish (`close ≥ open`) | **BUY** | below the bar (Wingdings 233) | `InpSigBull` |
-| Bearish (`close < open`) | **SELL** | above the bar (Wingdings 234) | `InpSigBear` |
+### 3.1 Direction & markers
+Direction comes from **C1's candle colour** — bullish (`close ≥ open`) → **BUY**
+arrow below the bar (Wingdings 233); bearish → **SELL** arrow above (234). Zones
+(when `InpShowZones`) span C1's high–low. Both arrows and zones are now V-driven
+(VolumeSpike drew them on the spike bar).
 
 ### 3.2 Timing / non-repainting
-
-The V is only evaluated on **closed bars** — a marker is committed for bar `i`
-only while `i < rates_total − 1`. The forming bar never receives an arrow, so a
-signal cannot appear and then vanish intrabar. The arrow for C1 appears the moment
-C1 closes (i.e. when C0 opens); the trader enters at C0's open.
+The V is evaluated on **closed bars** only — a marker is committed for bar `i`
+only while `i < rates_total − 1`. The arrow for C1 appears the moment C1 closes
+(when C0 opens); the trader enters at C0's open.
 
 ---
 
 ## 4. Input Parameters
 
+Identical to VolumeSpike **except** the additions marked **(new)**.
+
 ```mql5
 // ── Detection ───────────────────────────────────────────────────────
-input ENUM_VSOURCE    InpSource     = VSRC_THRESHOLD; // Source line for the V
-input int             InpZPeriod    = 20;             // MA / StdDev period (bars)
-input ENUM_MA_METHOD  InpMAType     = MODE_SMA;       // MA type (SMA/EMA/SMMA; WMA→SMA)
-input double          InpMultiplier = 2.0;            // StdDev multiplier (Threshold source)
-input double          InpRisePct    = 0.20;           // Min rise leg (fraction, 0.20 = 20%)
+input ENUM_DETECT_METHOD InpMethod     = METHOD_STDDEV; // incl. METHOD_THRESHOLD (new)
+input int                InpMAPeriod   = 20;
+input ENUM_MA_METHOD     InpMAType     = MODE_SMA;
+input double             InpMultiplier = 2.0;
+input double             InpZThreshold = 2.5;
+input int                InpPctPeriod  = 100;
+input double             InpPctCutoff  = 95.0;
+input int                InpRvolDays   = 10;
+input double             InpRvolThreshold = 2.0;
+input double             InpRisePct    = 0.20;           // V rise leg, fraction (new)
 
 // ── Price Chart ──────────────────────────────────────────────────────
-input bool            InpShowArrows = true;           // Draw signal arrows
-input color           InpBullColor  = clrDodgerBlue;  // Buy (bullish C1) colour
-input color           InpBearColor  = clrOrangeRed;   // Sell (bearish C1) colour
-input int             InpArrowSize  = 1;              // Arrow size (1–5)
+input bool   InpShowArrows = true;   input bool  InpShowZones = false;
+input color  InpBullColor  = clrDodgerBlue; input color InpBearColor = clrOrangeRed;
+input color  InpZoneColor  = clrGold;       input int   InpArrowSize = 1;
 
-// ── Sub-Window Line ──────────────────────────────────────────────────
-input color           InpLineColor  = clrYellow;      // Source line colour
-input color           InpSigBull    = clrLime;        // Signal highlight – buy
-input color           InpSigBear    = clrRed;         // Signal highlight – sell
+// ── Sub-Window ───────────────────────────────────────────────────────
+input color  InpBarBull = clrSteelBlue;  input color InpBarBear   = clrDimGray;
+input color  InpSpikeBull = clrDodgerBlue; input color InpSpikeBear = clrOrangeRed;
+input bool   InpShowZScore = false;
 
-// ── Alerts ───────────────────────────────────────────────────────────
-input bool            InpAlert            = true;     // Pop-up alert
-input bool            InpPush             = false;    // Push notification
-input bool            InpEmail            = false;    // Email alert
-input bool            InpWhatsApp         = false;    // WhatsApp (Maytapi)
-input string          InpMaytapiProductId = "";       // Maytapi product ID
-input string          InpMaytapiPhoneId   = "";       // Maytapi phone ID
-input string          InpMaytapiKey       = "";       // Maytapi API key
-input string          InpWhatsAppTo       = "";       // Recipient (+XXXXXXXXXXX)
-
-// ── Time Filter ──────────────────────────────────────────────────────
-input bool            InpTimeFilter   = false;        // Enable time-of-day filter
-input int             InpTimeFromHour = 9;            // From – hour   (0-23)
-input int             InpTimeFromMin  = 0;            // From – minute (0-59)
-input int             InpTimeToHour   = 23;           // To   – hour   (0-23)
-input int             InpTimeToMin    = 59;           // To   – minute (0-59)
+// ── Alerts ──── (InpAlert, InpPush, InpEmail, InpWhatsApp + Maytapi fields) ──
+// ── Time Filter ──── (InpTimeFilter, From/To hour/min) ──
 ```
 
 ---
 
-## 5. Indicator Buffers
+## 5. Indicator Buffers — IDENTICAL to VolumeSpike
 
 | Index | Variable | Plot type | Description |
 |-------|----------|-----------|-------------|
-| 0 | `g_src` | `DRAW_COLOR_LINE` | The selected source line (also read back for the V test) |
-| 1 | `g_srccol` | colour index | 0 = normal, 1 = signal-buy, 2 = signal-sell |
+| 0 | `g_vol` | `DRAW_COLOR_HISTOGRAM` | Volume bar heights |
+| 1 | `g_col` | colour index | 0=bull, 1=bear, 2=spike-bull, 3=spike-bear |
+| 2 | `g_ma` | `DRAW_LINE` | Volume moving average |
+| 3 | `g_thresh` | `DRAW_LINE` (dashed) | `MA + Multiplier × StdDev` |
+| 4 | `g_z` | `DRAW_LINE` (dotted) | Z-score × MA (hidden unless `InpShowZScore`) |
 
-> 1 plot, 2 buffers. The source buffer doubles as detection storage — since
-> indicator buffers persist across `OnCalculate` calls, the V test reads
-> `g_src[i-1]` and `g_src[i-2]` directly. Arrows are chart objects (`OBJ_ARROW`)
-> prefixed `VolumeVPattern_`, not buffers.
+> 4 plots, 5 buffers — same as VolumeSpike, so the sub-window renders identically.
+> Internally, `g_sig[]` holds the selected method's line so the V test can read
+> `s[i-1]` / `s[i-2]` across calls. Arrows/zones are chart objects prefixed
+> `VolumeVPattern_`.
 
 ---
 
 ## 6. Alert Behaviour
 
-### Once-per-candle guard
-Alerts fire **at most once per candle**. `g_last_alert_bar` records the open-time
-of the C1 bar that last triggered; the alert is raised when C1 becomes the newest
-closed bar (`i == rates_total − 2`).
-
-### Time-of-day filter
-When `InpTimeFilter = true`:
-- **Alerts** are gated by `TimeCurrent()` (MT5 server time).
-- **Arrows** on intraday timeframes (< H4) are gated by the bar's open time.
-- **Arrows on H4 and above** bypass the filter (a daily bar opens at 00:00).
-
-Overnight ranges (e.g. 22:00 → 06:00) are supported. All times are **MT5 broker
-server time**.
-
-### WhatsApp (Maytapi)
-Identical mechanism to VolumeSpike: a POST to the Maytapi REST API on every alert.
-`https://api.maytapi.com` must be whitelisted in **Tools → Options → Expert
-Advisors → Allow WebRequest for listed URL**. If any of the four Maytapi fields
-are empty, no request is made.
+Same mechanics as VolumeSpike (pop-up / push / email / WhatsApp-Maytapi, once per
+candle via `g_last_alert_bar`, time-of-day filter with overnight support, H4+
+arrows bypass the intraday window). The only difference: the alert fires on the
+**V signal** when C1 becomes the newest closed bar (`i == rates_total − 2`),
+rather than on a spike.
 
 ---
 
 ## 7. Calculation Logic (Pseudocode)
 
 ```
-z_start  = InpZPeriod − 1          // first bar with a full window
-min_bars = InpZPeriod + 2          // +2 so s[i-1] and s[i-2] exist
+min_bars = MAX(InpMAPeriod, InpPctPeriod) + 1
 
-FOR each bar i FROM z_start TO rates_total-1:
+FOR each bar i FROM min_bars-1 TO rates_total-1:
 
-    vol = tick_volume[i]
-    ma  = MA(vol, i, InpZPeriod, InpMAType)
-    std = PopulationStdDev(vol, i, InpZPeriod)
+    vol    = tick_volume[i]
+    ma     = MA(vol, i, InpMAPeriod, InpMAType)
+    std    = PopulationStdDev(vol, i, InpMAPeriod)
+    z      = (std>0) ? (vol-ma)/std : 0
+    thresh = ma + InpMultiplier*std
+    rank   = PercentileRank(vol, i, InpPctPeriod)     // if Percentile
+    rvol   = vol / SessionAvg(i, InpRvolDays)          // if RVOL
 
-    s = SELECT InpSource:
-          THRESHOLD: ma + InpMultiplier*std
-          ZSCORE:    (std>0) ? (vol-ma)/std : 0
-          MA:        ma
-          VOLUME:    vol
-    g_src[i] = s
+    // Histogram colour – IDENTICAL to VolumeSpike
+    is_spike = SELECT InpMethod:
+        ZSCORE: z>InpZThreshold; PERCENTILE: rank>InpPctCutoff;
+        RVOL: rvol>InpRvolThreshold; else: vol>thresh
+    g_vol[i]=vol; g_ma[i]=ma; g_thresh[i]=thresh
+    g_z[i]= InpShowZScore ? z*ma : EMPTY_VALUE
+    g_col[i]= is_spike ? (bullish?2:3) : (bullish?0:1)
+
+    // V line for the selected method
+    s = SELECT InpMethod: PERCENTILE:rank; RVOL:rvol; THRESHOLD:thresh; else:z
+    g_sig[i] = s
 
     // V-pattern: bar i is C1, i-1 is C2 (trough), i-2 is C3
-    is_signal = false
-    IF i >= z_start+2 AND g_src[i-2] > g_src[i-1] AND s > g_src[i-1]:
-        rise_frac = (s - g_src[i-1]) / max(|g_src[i-1]|, 1e-10)
-        is_signal = (rise_frac >= InpRisePct)
+    v_signal = false
+    IF i >= min_bars+1 AND g_sig[i-2] > g_sig[i-1] AND s > g_sig[i-1]:
+        rise_frac = (s - g_sig[i-1]) / max(|g_sig[i-1]|, 1e-10)
+        v_signal  = (rise_frac >= InpRisePct)
 
-    closed = (i < rates_total-1)    // never commit on the forming bar
-    fire   = is_signal AND closed
+    fire = v_signal AND (i < rates_total-1)   // closed bars only
 
-    g_srccol[i] = fire ? (bullish?1:2) : 0
-
-    IF fire AND within_obj_history AND IsInTimeWindow(time[i]) AND InpShowArrows:
-        DrawArrow(time[i], bullish ? low[i] : high[i], bullish)
+    IF fire AND within_obj_history AND IsInTimeWindow(time[i]):
+        IF InpShowArrows: DrawArrow(time[i], bullish?low[i]:high[i], bullish)
+        IF InpShowZones:  DrawZone(time[i], high[i], low[i])
 
     IF fire AND i == rates_total-2 AND time[i] != g_last_alert_bar
        AND IsInTimeWindow(TimeCurrent()):
-        g_last_alert_bar = time[i]
-        TriggerAlert(...)
+        g_last_alert_bar = time[i]; TriggerAlert(...)
 ```
 
 ---
@@ -219,10 +209,8 @@ FOR each bar i FROM z_start TO rates_total-1:
 ## 8. Performance Notes
 
 - `OnCalculate()` uses `prev_calculated` to skip processed bars.
-- `tick_volume[]` is copied once to `g_dvol[]`; the source line is cached in the
-  `g_src` buffer and read back for the V test without recomputation.
-- EMA/SMMA seed is computed once; on incremental recalculation it is recovered via
-  `RecoverMA()`.
+- `tick_volume[]` copied once to `g_dvol[]`; the selected line cached in `g_sig[]`.
+- EMA/SMMA seed computed once; reseeded from `g_ma[]` on incremental calls.
 - Chart objects capped at the most recent `MAX_OBJ_HIST` (5000) bars on first load.
 
 ---
@@ -242,39 +230,33 @@ fx_tools/
 ## 10. Acceptance Criteria
 
 - [ ] Compiles without warnings in MetaEditor 5
-- [ ] Sub-window plots exactly one line — the selected source — and nothing else
-- [ ] Switching `InpSource` changes both the plotted line and the detection series
-- [ ] Line tints green/red at the C1 signal bar
-- [ ] Arrow appears on C1 only after C1 closes (no intrabar repaint)
-- [ ] Buy arrow below a bullish C1; sell arrow above a bearish C1
+- [ ] Sub-window is pixel-identical to VolumeSpike with the same settings
+- [ ] All 5 methods selectable (StdDev, Z-Score, Percentile, RVOL, Threshold)
+- [ ] Only the price-chart arrows/zones differ from VolumeSpike (V vs level cross)
 - [ ] V test matches: `s[3] > s[2]`, `s[1] > s[2]`, `(s[1]−s[2])/|s[2]| ≥ InpRisePct`
-- [ ] Same `InpRisePct` behaves sensibly across all four sources
+- [ ] Arrow on C1 only after C1 closes (no intrabar repaint)
+- [ ] Buy arrow below a bullish C1; sell arrow above a bearish C1
 - [ ] Alert fires at most once per candle
-- [ ] Time-of-day filter suppresses alerts and intraday arrows outside the window
-- [ ] H4/D1/W1/MN: arrows always drawn; alert still respects time window
+- [ ] Time-of-day filter and H4+ bypass behave as in VolumeSpike
 
 ---
 
-## 11. Relationship to VolumeSpike
+## 11. Comparison Workflow (intended use)
 
-| | VolumeSpike | VolumeVPattern |
-|--|-------------|----------------|
-| Signal basis | Volume **level** above norm | **V shape** on a chosen volume line |
-| Fires on | Any high-volume bar | Trough then sharp rise only |
-| Source line | fixed (volume histogram) | selectable: Threshold / Z-Score / MA / Volume |
-| Direction | Candle colour of spike bar | Candle colour of C1 (rise bar) |
-| Marker bar | Spike bar | C1 (rise bar), confirmed at close |
-| Shared | — | alerts/push/email, WhatsApp/Maytapi, time filter |
+1. Open the same chart twice (or attach both indicators).
+2. Attach **VolumeSpike** and **VolumeVPattern** with **identical** detection
+   settings (`InpMethod`, `InpMAPeriod`, multipliers, etc.).
+3. The volume sub-windows should look the same; compare **only the arrows**.
+4. Tune `InpRisePct` on the fork; evaluate which signal set performs better.
 
 ---
 
 ## 12. Roadmap / Future Improvements
 
-- **Configurable trough width** — let the dip span more than one bar (variable
-  floor) instead of the strict single-bar local minimum.
+- **Configurable trough width** — let the dip span more than one bar.
 - **Drop-leg minimum** — require the `s[3] → s[2]` drop to exceed a threshold.
 - **Signal strength rating** — grade by how far `rise_frac` exceeds `InpRisePct`.
-- **MQL5 Market listing** — once validated across instruments.
+- **WMA support** — VolumeSpike currently falls back to SMA for WMA; carry over.
 
 ---
 
