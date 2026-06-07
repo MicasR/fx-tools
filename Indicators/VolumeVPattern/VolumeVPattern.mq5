@@ -29,7 +29,7 @@
 //|    Threshold        → ma + Multiplier*std  (the dashed line)     |
 //+------------------------------------------------------------------+
 #property copyright    "Dercio Micas"
-#property version      "2.00"
+#property version      "2.01"
 #property description  "Volume Spike fork – same analytics, signals on a V-pattern in the selected line instead of a level cross"
 #property indicator_separate_window
 #property indicator_buffers  5
@@ -88,7 +88,7 @@ input int                InpPctPeriod     = 100;            // Percentile lookba
 input double             InpPctCutoff     = 95.0;           // Percentile cutoff  (%)
 input int                InpRvolDays      = 10;             // RVOL history (days)
 input double             InpRvolThreshold = 2.0;            // RVOL multiplier
-input double             InpRisePct       = 0.20;           // V rise leg (fraction, 0.20 = 20%)
+input double             InpRisePct       = 0.02;           // V rise leg (fraction, 0.02 = 2%)
 
 input group              "── Price Chart ─────────────────────────────";
 input bool               InpShowArrows    = true;           // Draw signal arrows

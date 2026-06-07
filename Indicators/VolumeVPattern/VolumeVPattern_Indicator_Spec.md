@@ -1,7 +1,7 @@
 # Volume V-Pattern Indicator — Technical Specification
 
 **Project:** FX Tools — MT5 Custom Indicator  
-**Version:** 2.00  
+**Version:** 2.01  
 **Status:** Active  
 **Author:** Dercio Micas  
 **Last updated:** 2026-06-08
@@ -15,6 +15,7 @@
 | 1.00 | 2026-06-08 | Initial implementation — V-pattern in the volume z-score |
 | 1.01 | 2026-06-08 | Selectable source line; plotted only that single line; rise leg as a percentage |
 | 2.00 | 2026-06-08 | **Re-forked from VolumeSpike.** Sub-window analytics now IDENTICAL to VolumeSpike (same histogram, MA, threshold, z-score lines and inputs). The ONLY change vs VolumeSpike is the price-chart signal: arrows/zones fire on a V-pattern in the selected method's line instead of a level cross. Added `METHOD_THRESHOLD` and `InpRisePct`. |
+| 2.01 | 2026-06-08 | Default `InpRisePct` lowered to `0.02` (2%). Live testing showed the fork beats VolumeSpike — closer to the optimal entry zone and catches setups the original missed. |
 
 ---
 
@@ -115,7 +116,7 @@ input int                InpPctPeriod  = 100;
 input double             InpPctCutoff  = 95.0;
 input int                InpRvolDays   = 10;
 input double             InpRvolThreshold = 2.0;
-input double             InpRisePct    = 0.20;           // V rise leg, fraction (new)
+input double             InpRisePct    = 0.02;           // V rise leg, fraction (new; 0.02 = 2%)
 
 // ── Price Chart ──────────────────────────────────────────────────────
 input bool   InpShowArrows = true;   input bool  InpShowZones = false;
