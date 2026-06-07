@@ -4,61 +4,61 @@
 //|                                                                   |
 //|  Volume "V" pattern detector for MetaTrader 5.                   |
 //|                                                                   |
-//|  Works on the VOLUME Z-SCORE series. A signal fires when the     |
-//|  z-score traces a V across three consecutive bars:               |
+//|  The trader picks ONE source line (InpSource); that single line  |
+//|  is plotted in the sub-window and the V is detected on it:        |
 //|                                                                   |
-//|        z[3] ●                       ● z[1]   ← sharp RISE leg     |
-//|              \                     /          (slope ≥ InpSlope)  |
+//|     Threshold : MA + Multiplier × StdDev   (the dashed line)     |
+//|     Z-Score   : (Volume − MA) / StdDev                           |
+//|     MA Volume : MA(Volume)                                        |
+//|     Volume    : raw tick volume                                   |
+//|                                                                   |
+//|        s[3] ●                       ● s[1]   ← RISE leg           |
+//|              \                     /          (rise % ≥ InpRisePct)|
 //|               \                   /                                |
-//|                \                 /                                 |
-//|                 ● z[2]  (trough, strict local minimum)            |
+//|                ● s[2]  (trough, strict local minimum)            |
 //|                                                                   |
 //|  Signal conditions (MT5 series indexing, [1] = last closed bar): |
-//|     z[3] > z[2]                  drop into the trough             |
-//|     z[1] > z[2]                  rise out of the trough           |
-//|     z[1] - z[2] >= InpSlope      the rise leg is steep enough     |
+//|     s[3] > s[2]                          drop into the trough     |
+//|     s[1] > s[2]                          rise out of the trough   |
+//|     (s[1] − s[2]) / |s[2]| >= InpRisePct rise leg steep enough    |
 //|                                                                   |
 //|  Arrow is drawn on C1 (the rise bar) at its close. Direction is  |
 //|  taken from C1's candle colour. The trader enters at C0 open.    |
-//|                                                                   |
-//|  Sub-window: colour-coded volume histogram + MA + (scaled)       |
-//|  z-score line so the V is visible.                               |
 //+------------------------------------------------------------------+
 #property copyright    "Dercio Micas"
-#property version      "1.00"
-#property description  "Volume V-Pattern – fires on a V in the volume z-score (drop into a trough, then a sharp rise)"
+#property version      "1.01"
+#property description  "Volume V-Pattern – detects a V (trough then sharp rise) on a user-selected volume line"
 #property indicator_separate_window
-#property indicator_buffers  4
-#property indicator_plots    3
+#property indicator_buffers  2
+#property indicator_plots    1
 
-//--- Plot 0: colour-coded volume histogram (occupies buffer index 0 + 1)
-#property indicator_label1   "Volume"
-#property indicator_type1    DRAW_COLOR_HISTOGRAM
-#property indicator_color1   clrSteelBlue, clrDimGray, clrDodgerBlue, clrOrangeRed
+//--- Plot 0: the single selected source line (colour-highlighted at signals)
+#property indicator_label1   "Source"
+#property indicator_type1    DRAW_COLOR_LINE
+#property indicator_color1   clrYellow, clrLime, clrRed
 #property indicator_style1   STYLE_SOLID
-#property indicator_width1   1
+#property indicator_width1   2
 
-//--- Plot 1: volume moving average
-#property indicator_label2   "MA Volume"
-#property indicator_type2    DRAW_LINE
-#property indicator_color2   clrWhite
-#property indicator_style2   STYLE_SOLID
-#property indicator_width2   2
-
-//--- Plot 2: volume z-score, scaled to MA units so it overlays the histogram
-#property indicator_label3   "Z-Score (scaled)"
-#property indicator_type3    DRAW_LINE
-#property indicator_color3   clrYellow
-#property indicator_style3   STYLE_DOT
-#property indicator_width3   1
+//+------------------------------------------------------------------+
+//| Source-line selector                                             |
+//+------------------------------------------------------------------+
+enum ENUM_VSOURCE
+{
+   VSRC_THRESHOLD = 0,   //  Threshold: MA + Multiplier × StdDev
+   VSRC_ZSCORE    = 1,   //  Z-Score: (Volume − MA) / StdDev
+   VSRC_MA        = 2,   //  MA of Volume
+   VSRC_VOLUME    = 3    //  Raw Volume
+};
 
 //+------------------------------------------------------------------+
 //| Input parameters                                                 |
 //+------------------------------------------------------------------+
 input group              "── Detection ──────────────────────────────";
-input int                InpZPeriod       = 20;             // Z-score MA period (bars)
+input ENUM_VSOURCE       InpSource        = VSRC_THRESHOLD;  // Source line for the V
+input int                InpZPeriod       = 20;             // MA / StdDev period (bars)
 input ENUM_MA_METHOD     InpMAType        = MODE_SMA;       // MA type
-input double             InpSlope         = 2.0;            // Min rise-leg slope  (z[1] − z[2])
+input double             InpMultiplier    = 2.0;            // StdDev multiplier (Threshold source)
+input double             InpRisePct       = 0.20;           // Min rise leg  (fraction, 0.20 = 20%)
 
 input group              "── Price Chart ─────────────────────────────";
 input bool               InpShowArrows    = true;           // Draw signal arrows
@@ -66,12 +66,10 @@ input color              InpBullColor     = clrDodgerBlue;  // Buy (bullish C1) 
 input color              InpBearColor     = clrOrangeRed;   // Sell (bearish C1) colour
 input int                InpArrowSize     = 1;              // Arrow size  (1–5)
 
-input group              "── Sub-Window ──────────────────────────────";
-input color              InpBarBull       = clrSteelBlue;   // Normal bull bar
-input color              InpBarBear       = clrDimGray;     // Normal bear bar
-input color              InpSigBull       = clrDodgerBlue;  // Signal bull bar (V + buy)
-input color              InpSigBear       = clrOrangeRed;   // Signal bear bar (V + sell)
-input bool               InpShowZScore    = true;           // Show z-score line
+input group              "── Sub-Window Line ─────────────────────────";
+input color              InpLineColor     = clrYellow;      // Source line colour
+input color              InpSigBull       = clrLime;        // Signal highlight – buy
+input color              InpSigBear       = clrRed;         // Signal highlight – sell
 
 input group              "── Alerts ──────────────────────────────────";
 input bool               InpAlert         = true;           // Pop-up alert
@@ -93,10 +91,8 @@ input int                InpTimeToMin     = 59;             // To   – minute (
 //+------------------------------------------------------------------+
 //| Indicator buffers                                                |
 //+------------------------------------------------------------------+
-double g_vol[];       // [0] histogram bar height
-double g_col[];       // [1] histogram colour index (0=bull, 1=bear, 2=sig-bull, 3=sig-bear)
-double g_ma[];        // [2] MA line
-double g_zplot[];     // [3] z-score × MA  (scaled to be visible in the same window)
+double g_src[];       // [0] selected source line (also read back for the V test)
+double g_srccol[];    // [1] colour index (0=normal, 1=signal-buy, 2=signal-sell)
 
 //+------------------------------------------------------------------+
 //| Globals                                                          |
@@ -105,8 +101,7 @@ double g_zplot[];     // [3] z-score × MA  (scaled to be visible in the same wi
 #define MAX_OBJ_HIST  5000     // max past bars to materialise chart objects on first load
 
 double   g_dvol[];          // double copy of tick_volume[], rebuilt each call
-double   g_zsc[];           // raw volume z-score per bar (persists across calls)
-int      g_zstart;          // first bar index with a meaningful z-score
+int      g_zstart;          // first bar index with a meaningful source value
 int      g_min_bars;        // minimum bars required before detection starts
 datetime g_last_alert_bar;  // open-time of the last bar that fired an alert
 
@@ -115,30 +110,24 @@ datetime g_last_alert_bar;  // open-time of the last bar that fired an alert
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   g_zstart   = InpZPeriod - 1;     // earliest bar with a full z-score window
-   g_min_bars = InpZPeriod + 2;     // +2 so z[i-1] and z[i-2] exist for the V test
+   g_zstart   = InpZPeriod - 1;     // earliest bar with a full window
+   g_min_bars = InpZPeriod + 2;     // +2 so s[i-1] and s[i-2] exist for the V test
 
    //--- bind buffers
-   SetIndexBuffer(0, g_vol,   INDICATOR_DATA);
-   SetIndexBuffer(1, g_col,   INDICATOR_COLOR_INDEX);
-   SetIndexBuffer(2, g_ma,    INDICATOR_DATA);
-   SetIndexBuffer(3, g_zplot, INDICATOR_DATA);
+   SetIndexBuffer(0, g_src,    INDICATOR_DATA);
+   SetIndexBuffer(1, g_srccol, INDICATOR_COLOR_INDEX);
 
-   //--- histogram colour palette  (indices 0-3 map to the four colours)
-   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 0, InpBarBull);
-   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 1, InpBarBear);
-   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 2, InpSigBull);
-   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 3, InpSigBear);
-   PlotIndexSetDouble (0, PLOT_EMPTY_VALUE, 0.0);
-
-   //--- hide z-score line unless enabled
-   if(!InpShowZScore)
-      PlotIndexSetInteger(2, PLOT_DRAW_TYPE, DRAW_NONE);
+   //--- line colour palette  (0=normal, 1=signal-buy, 2=signal-sell)
+   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 0, InpLineColor);
+   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 1, InpSigBull);
+   PlotIndexSetInteger(0, PLOT_LINE_COLOR, 2, InpSigBear);
+   PlotIndexSetDouble (0, PLOT_EMPTY_VALUE, EMPTY_VALUE);
 
    //--- sub-window label
+   string src[] = {"Threshold", "Z-Score", "MA", "Volume"};
    IndicatorSetString(INDICATOR_SHORTNAME,
-      "VolumeVPattern[" + (string)InpZPeriod + ", slope " +
-      DoubleToString(InpSlope, 1) + "]");
+      "VolumeVPattern[" + src[InpSource] + ", " + (string)InpZPeriod +
+      ", " + DoubleToString(InpRisePct * 100.0, 0) + "%]");
 
    return INIT_SUCCEEDED;
 }
@@ -150,7 +139,6 @@ void OnDeinit(const int reason)
 {
    DeleteAllObjects();
    ArrayFree(g_dvol);
-   ArrayFree(g_zsc);
 }
 
 //+------------------------------------------------------------------+
@@ -170,23 +158,24 @@ int OnCalculate(const int      rates_total,
    if(rates_total < g_min_bars)
       return 0;
 
-   //--- keep working arrays sized to history
+   //--- keep the double volume copy sized to history
    if(ArraySize(g_dvol) < rates_total)
-   {
       ArrayResize(g_dvol, rates_total);
-      ArrayResize(g_zsc,  rates_total);
-   }
-   if(prev_calculated <= 0)
-      ArrayInitialize(g_zsc, 0.0);
 
-   //--- refresh the double volume copy for the affected range
    int update_from = (prev_calculated <= 0) ? 0 : MathMax(0, prev_calculated - 1);
    for(int j = update_from; j < rates_total; j++)
       g_dvol[j] = (double)tick_volume[j];
 
-   //--- on full recalculation remove stale chart objects
+   //--- on full recalculation remove stale chart objects and blank the early line
    if(prev_calculated <= 0)
+   {
       DeleteAllObjects();
+      for(int j = 0; j < g_zstart && j < rates_total; j++)
+      {
+         g_src[j]    = EMPTY_VALUE;
+         g_srccol[j] = 0.0;
+      }
+   }
 
    int start = (prev_calculated <= 0) ? g_zstart : prev_calculated - 1;
 
@@ -202,7 +191,10 @@ int OnCalculate(const int      rates_total,
          ema_prev = seed / InpZPeriod;
       }
       else
-         ema_prev = g_ma[start - 1];
+      {
+         // recover the MA used on the previous bar from the stored source value
+         ema_prev = RecoverMA(start - 1);
+      }
    }
 
    const double ema_k  = 2.0 / (InpZPeriod + 1.0);   // EMA smoothing factor
@@ -257,22 +249,36 @@ int OnCalculate(const int      rates_total,
          }
       }
 
-      double z = (std_vol > 1e-10) ? (vol - ma_vol) / std_vol : 0.0;
-      g_zsc[i] = z;
+      // ── Selected source value ───────────────────────────────────
+      double s;
+      switch(InpSource)
+      {
+         case VSRC_ZSCORE:  s = (std_vol > 1e-10) ? (vol - ma_vol) / std_vol : 0.0; break;
+         case VSRC_MA:      s = ma_vol;                                             break;
+         case VSRC_VOLUME:  s = vol;                                                break;
+         default:           s = ma_vol + InpMultiplier * std_vol;                   break; // Threshold
+      }
+      g_src[i] = s;
 
       bool bullish = (close[i] >= open[i]);
 
       // ── V-pattern detection ─────────────────────────────────────
-      // Treat bar i as C1 (the rise bar). C2 = i-1 (trough), C3 = i-2.
-      //   z[i-2] > z[i-1]            drop into the trough
-      //   z[i]   > z[i-1]            rise out of the trough
-      //   z[i] - z[i-1] >= InpSlope  the rise leg is steep enough
-      bool is_signal = false;
+      // Treat bar i as C1 (rise bar). C2 = i-1 (trough), C3 = i-2 (pre-drop).
+      //   s[i-2] > s[i-1]                       drop into the trough
+      //   s[i]   > s[i-1]                       rise out of the trough
+      //   (s[i]-s[i-1]) / |s[i-1]| >= InpRisePct  rise leg steep enough
+      bool   is_signal = false;
+      double rise_frac = 0.0;
       if(i >= g_zstart + 2)
       {
-         double z_c2 = g_zsc[i - 1];   // trough
-         double z_c3 = g_zsc[i - 2];   // pre-drop
-         is_signal = (z_c3 > z_c2) && (z > z_c2) && ((z - z_c2) >= InpSlope);
+         double s2 = g_src[i - 1];   // trough
+         double s3 = g_src[i - 2];   // pre-drop
+         if(s3 > s2 && s > s2)
+         {
+            double denom = MathMax(MathAbs(s2), 1e-10);
+            rise_frac = (s - s2) / denom;
+            is_signal = (rise_frac >= InpRisePct);
+         }
       }
 
       // A signal is only valid on a CLOSED bar; the forming bar (last
@@ -280,20 +286,15 @@ int OnCalculate(const int      rates_total,
       bool closed = (i < rates_total - 1);
       bool fire   = is_signal && closed;
 
-      // ── Sub-window buffers ───────────────────────────────────────
-      g_vol[i]   = vol;
-      g_ma[i]    = ma_vol;
-      g_zplot[i] = InpShowZScore ? (z * ma_vol) : EMPTY_VALUE;
-      g_col[i]   = (double)(fire ? (bullish ? 2 : 3) : (bullish ? 0 : 1));
+      // ── Line colour: highlight the C1 bar on a signal ────────────
+      g_srccol[i] = (double)(fire ? (bullish ? 1 : 2) : 0);
 
       // ── Price-chart arrow on C1 ──────────────────────────────────
-      // On init only materialise objects for the most recent MAX_OBJ_HIST bars.
       bool draw_obj = (prev_calculated <= 0)
                       ? (i >= rates_total - MAX_OBJ_HIST)
                       : true;
 
-      // On H4+ the bar open time is not meaningful for intraday filtering;
-      // bypass so higher-TF signals are always drawn regardless of the window.
+      // On H4+ the bar open time is not meaningful for intraday filtering.
       bool in_window = (PeriodSeconds(_Period) >= PeriodSeconds(PERIOD_H4))
                        ? true
                        : IsInTimeWindow(time[i]);
@@ -309,11 +310,30 @@ int OnCalculate(const int      rates_total,
          && IsInTimeWindow(TimeCurrent()))
       {
          g_last_alert_bar = time[i];
-         TriggerAlert(vol, ma_vol, z, z - g_zsc[i - 1], bullish);
+         TriggerAlert(s, rise_frac, bullish);
       }
    }
 
    return rates_total;
+}
+
+//+------------------------------------------------------------------+
+//| Recover the MA value at bar idx from the stored source value.    |
+//| Only needed to reseed EMA/SMMA on incremental recalculation.     |
+//+------------------------------------------------------------------+
+double RecoverMA(int idx)
+{
+   if(idx < 0) return 0.0;
+   double s = g_src[idx];
+   // For MA/Threshold the stored value is derived from the MA; for the
+   // other sources we just recompute the SMA so the seed stays sensible.
+   if(InpSource == VSRC_MA)
+      return s;
+
+   int    cnt = MathMin(idx + 1, InpZPeriod);
+   double sum = 0;
+   for(int k = 0; k < cnt; k++) sum += g_dvol[idx - k];
+   return sum / cnt;
 }
 
 //+------------------------------------------------------------------+
@@ -323,7 +343,6 @@ void DrawArrow(const string name, datetime t, double price, bool bullish)
 {
    if(ObjectFind(0, name) >= 0) return;   // already drawn for this bar
 
-   // offset arrow away from the bar so it doesn't overlap the wick
    double offset = _Point * 15.0 * InpArrowSize;
    double y      = bullish ? price - offset : price + offset;
    int    code   = bullish ? 233 : 234;   // Wingdings solid up/down arrows
@@ -373,14 +392,15 @@ bool IsInTimeWindow(datetime t)
 //+------------------------------------------------------------------+
 //| Fire alert / push / email / WhatsApp                             |
 //+------------------------------------------------------------------+
-void TriggerAlert(double vol, double ma, double z, double slope, bool bullish)
+void TriggerAlert(double s, double rise_frac, bool bullish)
 {
-   string dir = bullish ? "BUY" : "SELL";
+   string src[] = {"Threshold", "Z-Score", "MA", "Volume"};
+   string dir   = bullish ? "BUY" : "SELL";
    string msg = StringFormat(
-      "[VolumeVPattern] %s %s | %s | Vol: %.0f | MA: %.0f | Z: %.2f | Slope: %.2f | %s",
+      "[VolumeVPattern] %s %s | %s | %s: %.2f | Rise: %.0f%% | %s",
       _Symbol,
       EnumToString(_Period),
-      dir, vol, ma, z, slope,
+      dir, src[InpSource], s, rise_frac * 100.0,
       TimeToString(TimeCurrent(), TIME_DATE | TIME_MINUTES));
 
    if(InpAlert)   Alert(msg);
@@ -405,7 +425,6 @@ void SendWhatsApp(const string msg)
 
    string headers = "Content-Type: application/json\r\nx-maytapi-key: " + InpMaytapiKey;
 
-   // Escape backslashes then double-quotes so the JSON body stays valid
    string safe = msg;
    StringReplace(safe, "\\", "\\\\");
    StringReplace(safe, "\"", "\\\"");
