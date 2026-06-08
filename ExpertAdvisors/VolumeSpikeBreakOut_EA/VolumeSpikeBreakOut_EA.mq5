@@ -3,24 +3,27 @@
 //|                                          Dercio Micas – 2026     |
 //|                                                                   |
 //|  Expert Advisor that trades the VolumeSpikeBreakOut indicator.   |
-//|  Detection + breakout logic are embedded (mirror the indicator)  |
-//|  so the EA is fully self-contained for the Strategy Tester.      |
+//|  Detection logic is embedded (mirrors the indicator) so the EA   |
+//|  is fully self-contained for the Strategy Tester.               |
 //|                                                                   |
 //|  Logic (validated on XAUUSD H1, see indicator spec §11):         |
 //|   1. A TRIGGER fires on a closed bar T — V-pattern (default) or   |
 //|      Spike — using the selected method's line.                    |
-//|   2. The first of the next InpBreakBars closed bars to break T's  |
-//|      range gives the trade: break the high → BUY, the low → SELL  |
-//|      (direction confirmed by price, not candle colour).           |
-//|   3. Structural stop at T's opposite extreme; take-profit at      |
-//|      1:InpRR. Entry at the breakout bar's close (bar-close tool). |
+//|   2. An OCO pending pair is armed at T's range: a Buy Stop at T's |
+//|      HIGH and a Sell Stop at T's LOW, each with a structural stop |
+//|      at the opposite extreme and a 1:InpRR target. The FIRST to   |
+//|      fill cancels the other (OCO). If neither fills within         |
+//|      InpBreakBars bars, the pair is deleted (expires).            |
+//|                                                                   |
+//|  This gives the IDEALIZED break-level fill the backtest measured  |
+//|  (gold/BTC H1 ~0.21 avg R, net of cost). One setup at a time.     |
 //|                                                                   |
 //|  Default trigger = V-pattern; on H4 the Spike trigger is better.  |
 //|  Edge is demonstrated on gold & BTC only — do NOT run on          |
 //|  mean-reverting FX (it is a net loser there).                     |
 //+------------------------------------------------------------------+
 #property copyright "Dercio Micas"
-#property version   "1.00"
+#property version   "1.01"
 
 #include <Trade\Trade.mqh>
 
@@ -47,7 +50,7 @@ enum ENUM_BO_METHOD
 //+------------------------------------------------------------------+
 input group              "── Detection ──────────────────────────────";
 input ENUM_BO_TRIGGER    InpTrigger       = BO_TRIGGER_VPATTERN; // Setup trigger (V-pattern: H1; Spike: H4)
-input int                InpBreakBars     = 4;                   // Breakout window (bars to confirm)
+input int                InpBreakBars     = 4;                   // Breakout window (bars before the pair expires)
 input ENUM_BO_METHOD     InpMethod        = BO_METHOD_THRESHOLD; // Detection method
 input int                InpMAPeriod      = 20;                  // MA period (bars)
 input ENUM_MA_METHOD     InpMAType        = MODE_SMA;            // MA type
@@ -68,20 +71,20 @@ input int                InpTimeToMin     = 59;                 // To   – minu
 
 input group              "── Trade ───────────────────────────────────";
 input double             InpLotSize       = 0.01;               // Lot size (fixed)
-input int                InpMaxTrades     = 1;                  // Max open trades (-1 = unlimited)
+input int                InpMaxTrades     = 1;                  // Max open trades (one setup at a time)
 input int                InpMaxSpread     = -1;                 // Max spread in points (-1 = disabled)
 input long               InpMagicNumber   = 20260608;           // Magic number
 input int                InpDeviation     = 30;                 // Max slippage (points)
 
 input group              "── Risk ────────────────────────────────────";
 input double             InpRR            = 3.0;                // Take-profit risk:reward (1:RR)
-input int                InpSLMinPoints   = 100;                // Minimum stop distance floor (points)
+input int                InpMinRangePts   = 100;                // Skip if trigger-bar range < this (points)
 
 //+------------------------------------------------------------------+
 //| Globals                                                          |
 //+------------------------------------------------------------------+
-datetime g_last_bar    = 0;
-datetime g_last_entry  = 0;   // open-time of the breakout bar we last traded
+datetime g_last_bar = 0;
+datetime g_arm_time = 0;   // open-time of the trigger bar whose OCO pair is live
 int      g_min_bars;
 CTrade   g_trade;
 
@@ -90,99 +93,96 @@ CTrade   g_trade;
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   g_min_bars   = MathMax(InpMAPeriod, InpPctPeriod) + 1;
+   g_min_bars = MathMax(InpMAPeriod, InpPctPeriod) + 1;
    g_trade.SetExpertMagicNumber(InpMagicNumber);
    g_trade.SetDeviationInPoints(InpDeviation);
    return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
-//| OnTick – act once per newly closed bar                           |
+//| OnTick                                                           |
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   // ---- OCO: a fill on one side cancels the still-pending other side ----
+   if(CountOpenTrades() > 0 && CountPendings() > 0)
+      DeleteAllPendings();
+
+   // ---- the rest runs once per newly closed bar ----
    datetime current_bar = iTime(_Symbol, _Period, 0);
-   if(current_bar == g_last_bar) return;     // only on a new bar
+   if(current_bar == g_last_bar) return;
    g_last_bar = current_bar;
 
+   // ---- expire an un-filled pair after the breakout window ----
+   if(CountPendings() > 0 && g_arm_time > 0 &&
+      (current_bar - g_arm_time) / PeriodSeconds(_Period) > InpBreakBars)
+      DeleteAllPendings();
+
+   // ---- gating: one setup at a time ----
    if(!IsInTimeWindow(TimeCurrent())) return;
    if(InpMaxSpread != -1 && (int)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) > InpMaxSpread) return;
+   if(CountOpenTrades() > 0 || CountPendings() > 0) return;
    if(InpMaxTrades != -1 && CountOpenTrades() >= InpMaxTrades) return;
 
-   // ---- evaluate the just-closed bar (series index 1) as a breakout entry ----
-   bool buy; int trig_idx;
-   if(!DetectBreakout(buy, trig_idx)) return;
-
-   datetime entry_bar = iTime(_Symbol, _Period, 1);
-   if(entry_bar == g_last_entry) return;     // already traded this bar
-
-   // structural stop = trigger bar's opposite extreme
-   double sl = buy ? iLow(_Symbol, _Period, trig_idx) : iHigh(_Symbol, _Period, trig_idx);
-   double entry = buy ? SymbolInfoDouble(_Symbol, SYMBOL_ASK)
-                      : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   sl = ApplyStopFloor(buy, entry, sl);
-   if((buy && sl >= entry) || (!buy && sl <= entry)) return;   // invalid geometry
-
-   double risk = MathAbs(entry - sl);
-   double tp   = buy ? entry + InpRR * risk : entry - InpRR * risk;
-   sl = NormalizeDouble(sl, _Digits);
-   tp = NormalizeDouble(tp, _Digits);
-
-   g_last_entry = entry_bar;
-   if(buy) g_trade.Buy (InpLotSize, _Symbol, entry, sl, tp);
-   else    g_trade.Sell(InpLotSize, _Symbol, entry, sl, tp);
+   // ---- arm the OCO pair if the just-closed bar is a trigger ----
+   if(IsTriggerBar())
+      ArmBreakoutPair();
 }
 
 //+------------------------------------------------------------------+
-//| Detect whether the just-closed bar (index 1) is a breakout entry.|
-//| Mirrors the indicator's backward scan: find the most recent      |
-//| un-broken trigger within InpBreakBars whose range bar[1] breaks. |
-//| Returns true and sets `buy` + `trig_idx` (series index of T).    |
+//| Arm a Buy Stop @ trigger high and Sell Stop @ trigger low, each   |
+//| with a structural stop (opposite extreme) and a 1:InpRR target.   |
 //+------------------------------------------------------------------+
-bool DetectBreakout(bool &buy, int &trig_idx)
+void ArmBreakoutPair()
 {
-   int need_back = InpBreakBars + 3;               // deepest trigger bar (T+2 for the V)
-   int win       = MathMax(3 * InpMAPeriod, InpPctPeriod + 1);
-   int total     = need_back + win + 2;
+   double hi = iHigh(_Symbol, _Period, 1);
+   double lo = iLow (_Symbol, _Period, 1);
+   double range = hi - lo;
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   if(range <= 0.0 || range < InpMinRangePts * point) return;   // range too tight
 
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double min_stop = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+
+   // both break levels must be a valid stop-order distance from the market
+   if(hi - ask < min_stop || bid - lo < min_stop) return;
+
+   double buy_price  = NormalizeDouble(hi, _Digits);
+   double buy_sl     = NormalizeDouble(lo, _Digits);
+   double buy_tp     = NormalizeDouble(hi + InpRR * range, _Digits);
+
+   double sell_price = NormalizeDouble(lo, _Digits);
+   double sell_sl    = NormalizeDouble(hi, _Digits);
+   double sell_tp    = NormalizeDouble(lo - InpRR * range, _Digits);
+
+   // GTC orders; expiry is managed manually per-bar (broker-independent)
+   bool ok1 = g_trade.BuyStop (InpLotSize, buy_price,  _Symbol, buy_sl,  buy_tp,
+                               ORDER_TIME_GTC, 0, "VSBO");
+   bool ok2 = g_trade.SellStop(InpLotSize, sell_price, _Symbol, sell_sl, sell_tp,
+                               ORDER_TIME_GTC, 0, "VSBO");
+
+   if(ok1 || ok2)
+      g_arm_time = iTime(_Symbol, _Period, 1);
+   // if only one leg placed, clean up so we never hold a one-sided setup
+   if(ok1 != ok2)
+      DeleteAllPendings();
+}
+
+//+------------------------------------------------------------------+
+//| Is the just-closed bar (series index 1) a trigger?               |
+//+------------------------------------------------------------------+
+bool IsTriggerBar()
+{
+   int win   = MathMax(3 * InpMAPeriod, InpPctPeriod + 1);
+   int total = win + 6;
    long     vol[];
-   double   high[], low[];
    datetime time[];
    ArraySetAsSeries(vol,  true);
-   ArraySetAsSeries(high, true);
-   ArraySetAsSeries(low,  true);
    ArraySetAsSeries(time, true);
-
-   if(CopyTickVolume(_Symbol, _Period, 0, total, vol)  < total)        return false;
-   if(CopyHigh(_Symbol, _Period, 0, need_back + 2, high) < need_back+2) return false;
-   if(CopyLow (_Symbol, _Period, 0, need_back + 2, low)  < need_back+2) return false;
-   if(CopyTime(_Symbol, _Period, 0, total, time)        < total)        return false;
-
-   int maxlook = MathMin(InpBreakBars, total - g_min_bars - 3);
-   for(int back = 1; back <= maxlook; back++)
-   {
-      int T = 1 + back;                            // candidate trigger bar (older)
-      if(!TriggerFired(vol, time, T))              continue;
-
-      double hiT = high[T];
-      double loT = low[T];
-
-      // skip if any bar strictly between T and 1 already broke the range
-      bool resolved = false;
-      for(int j = 2; j < T; j++)
-         if(high[j] >= hiT || low[j] <= loT) { resolved = true; break; }
-      if(resolved)                                 continue;
-
-      bool up = (high[1] >= hiT);
-      bool dn = (low[1]  <= loT);
-      if(up && dn)                                 continue;   // straddle → ambiguous
-      if(!up && !dn)                               continue;   // bar 1 didn't break it
-
-      buy      = up;
-      trig_idx = T;
-      return true;
-   }
-   return false;
+   if(CopyTickVolume(_Symbol, _Period, 0, total, vol)  < total) return false;
+   if(CopyTime      (_Symbol, _Period, 0, total, time) < total) return false;
+   return TriggerFired(vol, time, 1);
 }
 
 //+------------------------------------------------------------------+
@@ -320,19 +320,6 @@ double RvolAvg(const long &vol[], const datetime &time[], int idx)
 }
 
 //+------------------------------------------------------------------+
-//| Widen the stop to the broker / user minimum distance if needed.  |
-//+------------------------------------------------------------------+
-double ApplyStopFloor(bool buy, double entry, double sl)
-{
-   double point      = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-   double broker_min = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
-   double min_dist   = MathMax(InpSLMinPoints * point, broker_min);
-   if(buy  && entry - sl < min_dist) sl = entry - min_dist;
-   if(!buy && sl - entry < min_dist) sl = entry + min_dist;
-   return sl;
-}
-
-//+------------------------------------------------------------------+
 //| Count open positions for this EA on the current symbol.          |
 //+------------------------------------------------------------------+
 int CountOpenTrades()
@@ -346,6 +333,39 @@ int CountOpenTrades()
       count++;
    }
    return count;
+}
+
+//+------------------------------------------------------------------+
+//| Count this EA's pending orders on the current symbol.            |
+//+------------------------------------------------------------------+
+int CountPendings()
+{
+   int count = 0;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0)                                             continue;
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol)                continue;
+      if(OrderGetInteger(ORDER_MAGIC) != (long)InpMagicNumber)   continue;
+      count++;
+   }
+   return count;
+}
+
+//+------------------------------------------------------------------+
+//| Delete all of this EA's pending orders on the current symbol.    |
+//+------------------------------------------------------------------+
+void DeleteAllPendings()
+{
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0)                                             continue;
+      if(OrderGetString(ORDER_SYMBOL) != _Symbol)                continue;
+      if(OrderGetInteger(ORDER_MAGIC) != (long)InpMagicNumber)   continue;
+      g_trade.OrderDelete(ticket);
+   }
+   g_arm_time = 0;
 }
 
 //+------------------------------------------------------------------+

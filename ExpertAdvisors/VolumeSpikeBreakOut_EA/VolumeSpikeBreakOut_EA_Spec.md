@@ -1,7 +1,7 @@
 # VolumeSpikeBreakOut EA — Technical Specification
 
 **Project:** FX Tools — MT5 Expert Advisor
-**Version:** 1.00
+**Version:** 1.01
 **Status:** Active
 **Author:** Dercio Micas
 **Last updated:** 2026-06-08
@@ -12,7 +12,8 @@
 
 | Version | Date | Change |
 |---------|------|--------|
-| 1.00 | 2026-06-08 | Initial implementation. Automates the **VolumeSpikeBreakOut** indicator: V-pattern (default) or Spike trigger → breakout-of-range entry → structural stop, 1:RR target. Self-contained (embedded detection) for the Strategy Tester. |
+| 1.00 | 2026-06-08 | Initial implementation. Automates the **VolumeSpikeBreakOut** indicator: V-pattern (default) or Spike trigger → breakout-of-range entry → structural stop, 1:RR target. Self-contained (embedded detection) for the Strategy Tester. Entry at the breakout bar's *close*. |
+| 1.01 | 2026-06-08 | **Idealized break-level entry via an OCO pending-stop pair.** On a trigger bar, arm a Buy Stop @ high and Sell Stop @ low (structural SL, 1:RR TP); the first fill cancels the other; the pair expires after `InpBreakBars` bars. Recovers the ~0.05 R/trade that the v1.00 close-entry gave up — expected avg R ≈ 0.21 (gold), matching the backtest. |
 
 ---
 
@@ -25,10 +26,10 @@ runs self-contained in the Strategy Tester with no indicator dependency.
 **What it trades (the validated edge):**
 1. A **trigger** fires on a closed bar T — `V-pattern` (default) or `Spike`, using
    the selected method's line (default **Threshold** = `MA + Mult·StdDev`).
-2. Over the next `InpBreakBars` closed bars, the **first** to break T's range gives
-   the trade: break the high → **BUY**, break the low → **SELL**. Direction is
-   confirmed by price, not candle colour. A bar breaking both (straddle) → no trade;
-   no break within the window → the setup expires.
+2. An **OCO pending pair** is armed at T's range — a **Buy Stop @ T.high** and a
+   **Sell Stop @ T.low**. The first to fill is the trade (direction confirmed by
+   price); the other is **cancelled** on the next tick. If neither fills within
+   `InpBreakBars` bars, the pair is deleted (expires).
 3. **Structural stop** at T's opposite extreme; **take-profit** at `1:InpRR` (default 3).
 
 **Scope (important):** the edge is demonstrated on **gold and BTC, H1, V-pattern**.
@@ -41,20 +42,24 @@ crosses) — it is a net loser there. See indicator spec §11.
 
 | Element | Rule |
 |---------|------|
-| Signal eval | On each **new closed bar**; the just-closed bar (series idx 1) is tested as the breakout bar via the same backward scan as the indicator. |
-| Entry | **Market**, at the breakout bar's close (bar-close tool). Buy at Ask, Sell at Bid. |
-| Stop loss | Trigger bar T's **opposite extreme** (low for a buy, high for a sell); widened to the broker / `InpSLMinPoints` floor if too tight. |
-| Take profit | `entry ± InpRR · |entry − SL|` (default 1:3). |
-| Dedupe | One entry per breakout bar (`g_last_entry`); `InpMaxTrades` caps concurrent positions. |
+| Signal eval | On each **new closed bar**, the just-closed bar (series idx 1) is tested as a trigger. |
+| Arming | If it's a trigger and we are flat with no pending pair: place **Buy Stop @ high[1]** and **Sell Stop @ low[1]** (GTC). |
+| Entry | The **break level** itself — whichever stop the market reaches first fills. |
+| OCO | On the next tick after a fill, the opposite pending order is **deleted**. |
+| Expiry | Managed per-bar: if the pair is unfilled after `InpBreakBars` bars, both are deleted. |
+| Stop loss | Trigger bar T's **opposite extreme** (low for the buy leg, high for the sell leg). |
+| Take profit | break level `± InpRR · range` where `range = high[1] − low[1]` (so 1:`InpRR` on the structural risk). |
+| Sizing / cap | Fixed `InpLotSize`; **one setup at a time** (`InpMaxTrades = 1`). |
 
-### 2.1 Entry-timing note (expected performance)
-The backtest entered at the **break level** (an intrabar stop) and measured avg R ≈
-**0.21** (gold) / 0.20 (BTC) on H1. The EA enters at the **breakout bar's close**,
-which is realistic for a bar-close tool but slightly worse — Python cross-check
-(entry at close, structural 1:3, net of cost) gives avg R ≈ **0.155, PF ≈ 1.24** on
-both gold and BTC. **That ~0.155 / PF 1.24 is the honest expectation for this EA**,
-not 0.21. A future pending-stop-order entry at the break level would recover most of
-the gap (see §6).
+### 2.1 Expected performance
+Entry is now the **idealized break-level fill** the backtest measured. On H1,
+V-pattern, structural 1:3, net of cost: **gold ≈ 0.21 avg R (PF 1.32, 6/6 segments),
+BTC ≈ 0.20 (PF 1.31, 6/6)** — see indicator spec §11. (v1.00 entered at the bar
+*close* and gave ≈ 0.155; v1.01's pending-stop pair recovers that gap.)
+
+A setup is **skipped** if the trigger-bar range is below `InpMinRangePts`, or if a
+break level is not a valid stop-order distance from the current market (e.g. an open
+gap already through the level) — we never place a one-sided or invalid pair.
 
 ---
 
@@ -94,7 +99,7 @@ input double          InpRisePct     = 0.02;   // only if trigger = V-pattern
 input double InpLotSize = 0.01;  input int InpMaxTrades = 1;   input int InpMaxSpread = -1;
 input long   InpMagicNumber = 20260608;  input int InpDeviation = 30;
 // ── Risk ──
-input double InpRR = 3.0;         input int InpSLMinPoints = 100;
+input double InpRR = 3.0;         input int InpMinRangePts = 100;   // skip if trigger range < this
 ```
 
 > `InpMaxSpread = -1` (disabled) by default — gold's spread (~280 points at 3-digit
@@ -102,36 +107,43 @@ input double InpRR = 3.0;         input int InpSLMinPoints = 100;
 
 ---
 
-## 5. Execution Flow (per new bar)
+## 5. Execution Flow
 
 ```
-OnTick (first tick of a new bar only):
-  if outside time window / spread too high / at InpMaxTrades  → return
-  DetectBreakout():
-     for back = 1..InpBreakBars:
-        T = 1 + back
-        if not TriggerFired(T):                       continue
-        if any bar in (T, 1) already broke [low[T],high[T]]: continue
-        up = high[1] >= high[T];  dn = low[1] <= low[T]
-        if up and dn (straddle) or neither:           continue
-        → entry on bar 1, direction = up ? BUY : SELL ; trig = T ; break
-  if entry: SL = T's opposite extreme (floored); TP = 1:InpRR; market order
+OnTick (EVERY tick):
+  if a position is open AND a pending order remains → DeleteAllPendings()   // OCO
+
+OnTick (first tick of a NEW bar only):
+  if pending pair unfilled and (bars since arm) > InpBreakBars → DeleteAllPendings()  // expiry
+  if outside time window / spread too high                    → return
+  if any position OR any pending of ours exists               → return       // one setup at a time
+  if IsTriggerBar(index 1):
+     range = high[1] - low[1]
+     if range >= InpMinRangePts and both levels a valid stop distance from market:
+        BuyStop  @ high[1]  SL=low[1]   TP=high[1]+InpRR*range
+        SellStop @ low[1]   SL=high[1]  TP=low[1] -InpRR*range
+        remember arm time
 ```
+
+OCO is enforced two ways: the per-tick check cancels the surviving leg right after a
+fill, and *one-setup-at-a-time* guarantees only the current pair's orders exist, so
+"delete all our pendings when a position is open" is unambiguous.
 
 ---
 
 ## 6. Limitations & Future Work
 
-- **One setup at a time** (`InpMaxTrades=1` default). The backtest took overlapping
-  signals independently; the EA is more conservative, so live trade count ≤ backtest.
-- **Market entry at bar close**, not the break level → ~0.05 R/trade below the
-  idealized backtest (§2.1). *Future:* place **Buy/Sell Stop OCO pending orders** at
-  T's extremes (expiry = `InpBreakBars` bars) to fill at the break level and recover
-  the gap.
+- **One setup at a time** (`InpMaxTrades=1`). The backtest took overlapping signals
+  independently; the EA is more conservative, so live trade count ≤ backtest. This is
+  also what makes the simple "delete-all-pendings" OCO unambiguous.
 - **Fixed lot** sizing. *Future:* risk-% sizing off the structural stop distance.
 - **No swap/financing** modelled here (multi-bar holds).
-- Rare: a single fast bar gapping through **both** extremes could open opposing
-  positions before dedupe; negligible on liquid gold/BTC H1.
+- **Rare double-fill:** if one fast tick trades through *both* break levels before the
+  per-tick OCO runs, two opposing positions could open. Negligible on liquid gold/BTC
+  H1; `OnTradeTransaction`-based instant OCO is a possible hardening.
+- **Gap skips:** if price has already passed a break level when the bar opens, that
+  pair is skipped (no valid stop-order distance) — matches the backtest's straddle/
+  no-trade handling.
 
 ---
 
@@ -151,21 +163,23 @@ fx_tools/
 
 - [ ] Compiles without warnings in MetaEditor 5 *(done: 0 errors, 0 warnings)*
 - [ ] On XAUUSD H1 with defaults, Strategy Tester shows a **positive** result
-      roughly in line with avg R ≈ 0.155 / PF ≈ 1.24 (modulo the tester fill model)
-- [ ] Trade direction = breakout side (buy on high break, sell on low break)
-- [ ] Stop sits at the trigger bar's opposite extreme; TP at 1:InpRR
-- [ ] One entry per breakout bar; respects `InpMaxTrades`, spread, time filter
-- [ ] `InpTrigger` switches between V-pattern and Spike; `InpMethod` selectable
-- [ ] No trades on the forming bar (acts only on closed bars)
+      roughly in line with avg R ≈ 0.21 / PF ≈ 1.3 (modulo the tester fill model)
+- [ ] On a trigger bar, a Buy Stop @ high and Sell Stop @ low are placed
+- [ ] First fill cancels the opposite pending order (OCO)
+- [ ] Unfilled pairs disappear after `InpBreakBars` bars
+- [ ] Filled trade direction = break side; SL at opposite extreme; TP at 1:InpRR
+- [ ] Only one setup (pair or position) active at a time
+- [ ] `InpTrigger` switches V-pattern/Spike; `InpMethod` selectable; closed bars only
 
 ---
 
 ## 9. Validation Basis
 
 Indicator spec §11: gold +0.21 / BTC +0.20 avg R on H1 (6/6 segments, net of cost),
-break-level entry. EA entry-at-close cross-check (Python, `experiments.py`
-`break_entry="close"`): gold/BTC ≈ 0.155 avg R, PF 1.24. Strategy-Tester
-confirmation on XAUUSD H1 is the recommended next step before any live/demo use.
+**break-level entry — which v1.01's OCO pending-stop pair reproduces.** (The v1.00
+bar-close entry measured ≈ 0.155 avg R via `experiments.py break_entry="close"`; the
+~0.05 R gap is what the pending-stop entry recovers.) Strategy-Tester confirmation on
+XAUUSD H1 is the recommended next step before any live/demo use.
 
 ---
 
