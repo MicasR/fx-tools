@@ -41,9 +41,15 @@ def _direction(df, i, mode, ema, disp_lb):
 
 
 def evaluate_dir(df, sig, *, mode="candle", rr=RR, atr_mult=ATR_MULT,
-                 trend_ema=0, decisive=False, break_wait=8, disp_lb=2):
+                 trend_ema=0, decisive=False, break_wait=8, disp_lb=2,
+                 spread=0.0, slippage=0.0):
     """Evaluate signals with a configurable direction/entry rule + filters.
-    Returns dict with n, fwd win%@8, and avg R for ATR and structural brackets."""
+    Returns dict with n, fwd win%@8, and avg R for ATR and structural brackets.
+
+    Costs: `spread` and `slippage` are in PRICE units. Round-trip cost
+    = spread + 2*slippage is charged once per trade and deducted from the R
+    multiple as cost / risk_distance (so a wider stop dilutes the cost in R)."""
+    cost = spread + 2.0 * slippage
     o = df["open"].to_numpy(float)
     h = df["high"].to_numpy(float)
     l = df["low"].to_numpy(float)
@@ -56,6 +62,7 @@ def evaluate_dir(df, sig, *, mode="candle", rr=RR, atr_mult=ATR_MULT,
     idx = idx[(idx + 1 < n) & ~np.isnan(atr[idx])]
 
     fwd_wins, atr_R, str_R = [], [], []
+    atr_risk_px, str_risk_px = [], []
     skipped = 0
 
     for i in idx:
@@ -108,15 +115,17 @@ def evaluate_dir(df, sig, *, mode="candle", rr=RR, atr_mult=ATR_MULT,
         # ---- ATR bracket ----
         sl = entry - d * atr_mult * a
         tp = entry + d * rr * atr_mult * a
-        out = _walk(h, l, c, entry_j, end_b, d, sl, tp, rr, atr_mult * a)
+        out = _walk(h, l, c, entry_j, end_b, d, sl, tp, rr, atr_mult * a, cost)
         atr_R.append(out)
+        atr_risk_px.append(atr_mult * a)
 
         # ---- structural bracket (stop at C1 extreme) ----
         sl_s = h[i] if d == -1 else l[i]
         risk = d * (entry - sl_s)
         if risk > 0:
             tp_s = entry + d * rr * risk
-            str_R.append(_walk(h, l, c, entry_j, end_b, d, sl_s, tp_s, rr, risk))
+            str_R.append(_walk(h, l, c, entry_j, end_b, d, sl_s, tp_s, rr, risk, cost))
+            str_risk_px.append(risk)
 
     atr_R = np.array(atr_R) if atr_R else np.array([0.0])
     str_R = np.array(str_R) if str_R else np.array([0.0])
@@ -131,6 +140,8 @@ def evaluate_dir(df, sig, *, mode="candle", rr=RR, atr_mult=ATR_MULT,
         "str_totR": float(np.sum(str_R)),
         "atr_R": atr_R,
         "str_R": str_R,
+        "atr_risk_px": float(np.mean(atr_risk_px)) if atr_risk_px else 0.0,
+        "str_risk_px": float(np.mean(str_risk_px)) if str_risk_px else 0.0,
     }
 
 
@@ -153,18 +164,20 @@ def stats(R):
                 maxdd=dd, maxloss=int(mx))
 
 
-def _walk(h, l, c, start_j, end_b, d, sl, tp, rr, risk_px):
-    """First-touch walk forward → R multiple. Pessimistic on straddle bars."""
+def _walk(h, l, c, start_j, end_b, d, sl, tp, rr, risk_px, cost=0.0):
+    """First-touch walk forward → R multiple, net of round-trip cost.
+    Pessimistic on straddle bars. `cost` (price) is deducted as cost/risk_px."""
+    pen = cost / risk_px
     for j in range(start_j, end_b + 1):
         hit_sl = (l[j] <= sl) if d == 1 else (h[j] >= sl)
         hit_tp = (h[j] >= tp) if d == 1 else (l[j] <= tp)
         if hit_sl and hit_tp:
-            return -1.0
+            return -1.0 - pen
         if hit_sl:
-            return -1.0
+            return -1.0 - pen
         if hit_tp:
-            return rr
-    return d * (c[end_b] - (sl + d * risk_px)) / risk_px  # mark-to-market in R
+            return rr - pen
+    return d * (c[end_b] - (sl + d * risk_px)) / risk_px - pen  # mark-to-market in R
 
 
 def run(df, label, variants):
