@@ -96,8 +96,14 @@ def volumevpattern_signal(df: pd.DataFrame, method: str = "stddev",
 # ──────────────────────────────────────────────────────────────────────────
 def evaluate(df: pd.DataFrame, sig: pd.Series, *, horizons=(4, 8, 16),
              mfe_window: int = 16, atr_mult: float = 1.5, rr: float = 1.5,
-             max_hold: int = 64) -> dict:
-    """Simulate each signal: enter next bar open, dir = signal bar candle colour."""
+             struct_rr: float = 1.5, max_hold: int = 64) -> dict:
+    """Simulate each signal: enter next bar open, dir = signal bar candle colour.
+
+    Two bracket models are scored per signal:
+      * ATR bracket    : stop = entry ∓ atr_mult*ATR, target at 1:rr.
+      * struct bracket : stop = C1 extreme (high if short, low if long),
+                         target at 1:struct_rr where R = entry→stop distance.
+    """
     o = df["open"].to_numpy(float)
     h = df["high"].to_numpy(float)
     l = df["low"].to_numpy(float)
@@ -109,7 +115,8 @@ def evaluate(df: pd.DataFrame, sig: pd.Series, *, horizons=(4, 8, 16),
     idx = idx[(idx + 1 < n) & ~np.isnan(atr[idx])]   # need a next-bar open + valid ATR
 
     fwd = {hz: [] for hz in horizons}
-    mfe_l, mae_l, rmults = [], [], []
+    mfe_l, mae_l, rmults, srmults = [], [], [], []
+    struct_skipped = 0
 
     for i in idx:
         d = 1 if bull[i] else -1
@@ -152,7 +159,33 @@ def evaluate(df: pd.DataFrame, sig: pd.Series, *, horizons=(4, 8, 16),
             outcome = d * (c[end_b] - entry) / (atr_mult * a)
         rmults.append(outcome)
 
+        # ── Structural bracket → outcome in R multiples ──────────────
+        # Stop sits at C1's extreme: its high for a short, its low for a long.
+        sl_s = h[i] if d == -1 else l[i]
+        risk = d * (entry - sl_s)        # entry→stop distance (>0 if valid)
+        if risk <= 0:                    # gap put entry past the stop → no trade
+            struct_skipped += 1
+        else:
+            tp_s = entry + d * struct_rr * risk
+            s_out = None
+            for j in range(i + 1, end_b + 1):
+                hit_sl = (l[j] <= sl_s) if d == 1 else (h[j] >= sl_s)
+                hit_tp = (h[j] >= tp_s) if d == 1 else (l[j] <= tp_s)
+                if hit_sl and hit_tp:
+                    s_out = -1.0          # ambiguous bar → assume stop first
+                    break
+                if hit_sl:
+                    s_out = -1.0
+                    break
+                if hit_tp:
+                    s_out = struct_rr
+                    break
+            if s_out is None:             # timed out → mark to market in R
+                s_out = d * (c[end_b] - entry) / risk
+            srmults.append(s_out)
+
     rmults = np.array(rmults) if rmults else np.array([0.0])
+    srmults = np.array(srmults) if srmults else np.array([0.0])
     wins = rmults[rmults > 0]
     res = {
         "n_signals": int(len(idx)),
@@ -165,7 +198,14 @@ def evaluate(df: pd.DataFrame, sig: pd.Series, *, horizons=(4, 8, 16),
         "bracket_avg_R": float(np.mean(rmults)),
         "bracket_total_R": float(np.sum(rmults)),
         "bracket_rr": rr,
+        "struct_n": int(len(idx) - struct_skipped),
+        "struct_skipped": int(struct_skipped),
+        "struct_winrate": float(np.mean(srmults > 0)),
+        "struct_avg_R": float(np.mean(srmults)),
+        "struct_total_R": float(np.sum(srmults)),
+        "struct_rr": struct_rr,
         "idx": idx,
         "rmults": rmults,
+        "srmults": srmults,
     }
     return res
