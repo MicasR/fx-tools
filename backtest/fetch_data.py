@@ -21,13 +21,23 @@ TIMEFRAMES = {
 }
 
 
-def find_gold_symbol(preferred: str | None) -> str:
-    """Resolve the broker's gold symbol (XAUUSD / GOLD / XAUUSD.r ...)."""
-    syms = mt5.symbols_get()
-    names = [s.name for s in syms]
-    if preferred and preferred in names:
-        return preferred
-    # exact-ish first, then any containing XAU+USD, then any with GOLD
+def find_symbol(query: str | None) -> str:
+    """Resolve a broker symbol from a query (e.g. 'XAGUSD', 'EURUSD', 'BTCUSD').
+    Handles broker suffixes like the 'c' in XAUUSDc. Defaults to gold."""
+    names = [s.name for s in mt5.symbols_get()]
+    if query:
+        if query in names:
+            return query
+        q = query.upper().replace(".", "").replace("_", "")
+        cands = [n for n in names if n.upper().replace(".", "").replace("_", "") == q]
+        if not cands:                      # then any name containing the query
+            cands = [n for n in names if query.upper() in n.upper()]
+        if not cands:
+            raise SystemExit(f"No symbol matching '{query}'. Sample: "
+                             + ", ".join(names[:30]))
+        cands.sort(key=len)                # prefer the cleanest name
+        return cands[0]
+    # default: gold
     cands = [n for n in names if n.upper().replace(".", "").replace("_", "") == "XAUUSD"]
     if not cands:
         cands = [n for n in names if "XAU" in n.upper() and "USD" in n.upper()]
@@ -36,7 +46,7 @@ def find_gold_symbol(preferred: str | None) -> str:
     if not cands:
         raise SystemExit("Could not find a gold symbol. Available sample: "
                          + ", ".join(names[:30]))
-    cands.sort(key=len)  # prefer the cleanest name
+    cands.sort(key=len)
     return cands[0]
 
 
@@ -52,7 +62,7 @@ def main() -> None:
                          "Open MetaTrader 5 and log in, then re-run.")
 
     try:
-        symbol = find_gold_symbol(args.symbol)
+        symbol = find_symbol(args.symbol)
         mt5.symbol_select(symbol, True)
         tf = TIMEFRAMES[args.tf]
         date_from = datetime.fromisoformat(args.date_from)

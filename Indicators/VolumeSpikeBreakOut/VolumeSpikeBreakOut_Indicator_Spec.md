@@ -285,8 +285,24 @@ spread is <2% of risk; the edge is robust to costs (avg R barely moves to $1.50/
 - The long-run edge (avg R ≈ 0.2 on H1) is **more modest than the recent 5-month
   window** (≈ 0.4) suggested — that window was an unusually strong gold regime.
 
-> Caveat: still one symbol, gross of swap/financing for multi-day holds. Validated
-> across period and timeframe; not yet across symbols.
+**Multi-symbol validation** (H1, same 2024-03 → 2026-06 window, V-pattern trigger,
+net of each symbol's real spread):
+
+| Symbol | full avg R | PF | segments+ | verdict |
+|--------|-----------|-----|-----------|---------|
+| XAUUSD (gold) | +0.212 | 1.32 | 6/6 | strong |
+| BTCUSD | +0.195 | 1.31 | 6/6 | strong — independent confirmation |
+| EURUSD | +0.067 | 1.09 | 5/6 | modest (Spike *loses* here: −0.049) |
+| XAGUSD (silver) | +0.016 | 1.02 | 2/6 | no edge |
+
+- **BTC ≈ gold** (~0.2 avg R, PF ~1.3, 6/6) on a fully independent market → the edge
+  is a real volatility-breakout, not a gold curve-fit.
+- Works on **trending / high-vol** instruments (gold, BTC), fades on **range-bound**
+  ones (EUR modest, silver none) — an economically sensible boundary.
+- Costs stay 1.6–7.7% of R across symbols (wide structural stops), so net ≈ gross.
+
+> Caveat: gross of swap/financing for multi-day holds. Validated across period,
+> timeframe, and four symbols; not across all market types (range-bound FX is weak).
 
 ---
 
