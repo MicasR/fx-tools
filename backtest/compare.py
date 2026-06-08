@@ -9,6 +9,12 @@ Usage:
 """
 import argparse
 import glob
+import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 import numpy as np
 import pandas as pd
@@ -58,7 +64,7 @@ def main():
     vs = sg.evaluate(df, vs_sig, **ev)
     vp = sg.evaluate(df, vp_sig, **ev)
 
-    span = f"{df['time'].iloc[0]:%Y-%m-%d} → {df['time'].iloc[-1]:%Y-%m-%d}"
+    span = f"{df['time'].iloc[0]:%Y-%m-%d} -> {df['time'].iloc[-1]:%Y-%m-%d}"
     print("=" * 100)
     print(f"  {sym}  {args.tf}   {span}   ({len(df):,} bars)   method={args.method}  "
           f"rise={args.rise:.0%}  bracket={args.atr_mult}xATR @ 1:{args.rr}")
