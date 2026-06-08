@@ -308,12 +308,17 @@ net of each symbol's real spread):
 | Gold | V-pattern +0.21 | **Spike +0.29** |
 | BTC | V-pattern +0.20 | either ~+0.16 |
 | EURUSD | V-pattern +0.07 | V-pattern +0.15 |
-| Silver | none | **Spike +0.45** (small n) |
+| Silver | none | Spike +0.45 — **but see caveat** |
 
-- **Use V-pattern on H1, Spike on H4** — holds for gold & silver; BTC is indifferent;
+- **Use V-pattern on H1, Spike on H4** — clearest for gold; BTC is indifferent;
   EURUSD is the exception (V-pattern on both; Spike *loses* on EURUSD both TFs).
-- Silver has no H1 edge but Spike+H4 works → "no edge" was TF/trigger-specific.
-- H4 segments are small (~30–70 trades) → suggestive, less solid than H1.
+- **Silver H4 Spike is NOT a robust 0.45/PF-1.80 edge.** It's only 83 trades over
+  2.2yr (~3/month) and **73% of the profit comes from one window** (2025-11→2026-06,
+  PF 2.92) — a broadly favourable breakout regime seen across instruments, not a
+  silver structural edge. Ex that window: ~0.22 avg R, PF ~1.3 on 51 trades. Treat
+  as weak/inconclusive, not a green light.
+- H4 segments are small (~13–70 trades) → suggestive, far less solid than H1; watch
+  for single-window concentration before trusting any H4 aggregate.
 
 > Caveat: gross of swap/financing for multi-day holds. Validated across period,
 > timeframe, and four symbols; not across all market types (range-bound FX is weak).
