@@ -294,19 +294,26 @@ net of each symbol's real spread):
 | BTCUSD | +0.195 | 1.31 | 6/6 | strong — independent confirmation |
 | EURUSD | +0.067 | 1.09 | 5/6 | modest (Spike *loses* here: −0.049) |
 | XAGUSD (silver) | +0.016 | 1.02 | 2/6 | no edge |
-| GBPJPY | −0.047 | 0.94 | 2/6 | **negative** |
-| USDJPY | −0.028 | 0.96 | 2/6 | **negative** (front-loaded, then bled out) |
+| GBPJPY | −0.047 | 0.94 | 2/6 | negative (trends but whipsaws) |
+| USDJPY | −0.028 | 0.96 | 2/6 | negative (front-loaded, then bled out) |
+| AUDUSD | −0.143 | 0.83 | 1/6 | negative |
+| AUDCAD | −0.442 | 0.55 | **0/6** | **consistent loser** |
+| AUDNZD | −0.402 | 0.61 | **0/6** | **consistent loser** |
 
 - **BTC ≈ gold** (~0.2 avg R, PF ~1.3, 6/6) on a fully independent market → the edge
   is real, not a single-instrument curve-fit.
-- **It is NOT simply "trending vs range-bound."** GBPJPY/USDJPY are highly trending yet
-  net negative — *worse* than range-bound EURUSD. The robust edge is, so far, specific
-  to **gold and BTC**; all tested FX (range-bound and trending alike) is weak-to-negative.
-- Leading hypotheses for why gold/BTC work (unresolved, need a non-FX trending asset
-  to test — none on this broker): **directional persistence** (gold/BTC trended
-  persistently 2024–26; JPY had whipsaw intervention reversals that kill breakouts),
-  and/or **volume-signal quality** (centralised vs decentralised FX tick volume).
-- Costs stay 1.6–7.7% of R across symbols (wide structural stops), so net ≈ gross.
+- **The axis is follow-through vs mean-reversion — NOT trending vs range-bound.** Across
+  9 instruments the result is a clean monotonic gradient: persistent-trend assets
+  (gold, BTC) win; mean-reverting commodity crosses (AUDNZD, AUDCAD) lose in *every*
+  segment (~−0.4 R, negative even gross); JPY crosses (trend but whipsaw on BoJ) and
+  EUR/silver sit in between. A breakout system harvests follow-through and gets
+  systematically chopped by mean-reversion.
+- **Deploy only on persistent-trend instruments (here: gold, BTC).** Do NOT use on
+  mean-reverting FX — especially commodity crosses, which are reliable losers.
+- Spin-off worth noting: AUDCAD/AUDNZD are *consistent* −0.4R losers, so the **inverse**
+  (fade-the-breakout / mean-reversion entry) may be a positive edge there — untested.
+- Costs are a larger share of R on small-range crosses (up to ~31% on AUDNZD) vs
+  1.6–2.2% on gold/BTC; another reason the edge concentrates in high-range trenders.
 
 **Trigger × timeframe rule** (deployment guidance, full avg R):
 
