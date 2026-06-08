@@ -301,6 +301,20 @@ net of each symbol's real spread):
   ones (EUR modest, silver none) — an economically sensible boundary.
 - Costs stay 1.6–7.7% of R across symbols (wide structural stops), so net ≈ gross.
 
+**Trigger × timeframe rule** (deployment guidance, full avg R):
+
+| | H1 best | H4 best |
+|--|---------|---------|
+| Gold | V-pattern +0.21 | **Spike +0.29** |
+| BTC | V-pattern +0.20 | either ~+0.16 |
+| EURUSD | V-pattern +0.07 | V-pattern +0.15 |
+| Silver | none | **Spike +0.45** (small n) |
+
+- **Use V-pattern on H1, Spike on H4** — holds for gold & silver; BTC is indifferent;
+  EURUSD is the exception (V-pattern on both; Spike *loses* on EURUSD both TFs).
+- Silver has no H1 edge but Spike+H4 works → "no edge" was TF/trigger-specific.
+- H4 segments are small (~30–70 trades) → suggestive, less solid than H1.
+
 > Caveat: gross of swap/financing for multi-day holds. Validated across period,
 > timeframe, and four symbols; not across all market types (range-bound FX is weak).
 
