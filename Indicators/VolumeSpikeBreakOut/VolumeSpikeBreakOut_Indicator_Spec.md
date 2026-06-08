@@ -294,11 +294,18 @@ net of each symbol's real spread):
 | BTCUSD | +0.195 | 1.31 | 6/6 | strong — independent confirmation |
 | EURUSD | +0.067 | 1.09 | 5/6 | modest (Spike *loses* here: −0.049) |
 | XAGUSD (silver) | +0.016 | 1.02 | 2/6 | no edge |
+| GBPJPY | −0.047 | 0.94 | 2/6 | **negative** |
+| USDJPY | −0.028 | 0.96 | 2/6 | **negative** (front-loaded, then bled out) |
 
 - **BTC ≈ gold** (~0.2 avg R, PF ~1.3, 6/6) on a fully independent market → the edge
-  is a real volatility-breakout, not a gold curve-fit.
-- Works on **trending / high-vol** instruments (gold, BTC), fades on **range-bound**
-  ones (EUR modest, silver none) — an economically sensible boundary.
+  is real, not a single-instrument curve-fit.
+- **It is NOT simply "trending vs range-bound."** GBPJPY/USDJPY are highly trending yet
+  net negative — *worse* than range-bound EURUSD. The robust edge is, so far, specific
+  to **gold and BTC**; all tested FX (range-bound and trending alike) is weak-to-negative.
+- Leading hypotheses for why gold/BTC work (unresolved, need a non-FX trending asset
+  to test — none on this broker): **directional persistence** (gold/BTC trended
+  persistently 2024–26; JPY had whipsaw intervention reversals that kill breakouts),
+  and/or **volume-signal quality** (centralised vs decentralised FX tick volume).
 - Costs stay 1.6–7.7% of R across symbols (wide structural stops), so net ≈ gross.
 
 **Trigger × timeframe rule** (deployment guidance, full avg R):
