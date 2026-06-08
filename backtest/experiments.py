@@ -42,7 +42,7 @@ def _direction(df, i, mode, ema, disp_lb):
 
 def evaluate_dir(df, sig, *, mode="candle", rr=RR, atr_mult=ATR_MULT,
                  trend_ema=0, decisive=False, break_wait=8, disp_lb=2,
-                 spread=0.0, slippage=0.0, invert=False):
+                 spread=0.0, slippage=0.0, invert=False, break_entry="level"):
     """Evaluate signals with a configurable direction/entry rule + filters.
     Returns dict with n, fwd win%@8, and avg R for ATR and structural brackets.
 
@@ -87,9 +87,9 @@ def evaluate_dir(df, sig, *, mode="candle", rr=RR, atr_mult=ATR_MULT,
                 if up and dn:           # straddle bar → ambiguous, skip
                     break
                 if up:
-                    d, entry, entry_j = 1, hi, j; break
+                    d, entry, entry_j = 1, (c[j] if break_entry == "close" else hi), j; break
                 if dn:
-                    d, entry, entry_j = -1, lo, j; break
+                    d, entry, entry_j = -1, (c[j] if break_entry == "close" else lo), j; break
             if d == 0:
                 skipped += 1; continue
         else:
