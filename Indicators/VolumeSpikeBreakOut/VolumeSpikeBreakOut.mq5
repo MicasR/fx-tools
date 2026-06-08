@@ -28,7 +28,7 @@
 //|  positive across all four time quarters with the Spike trigger.    |
 //+------------------------------------------------------------------+
 #property copyright    "Dercio Micas"
-#property version      "1.00"
+#property version      "1.01"
 #property description  "Volume Spike / V-pattern trigger + breakout-of-range entry (direction confirmed by price)"
 #property indicator_separate_window
 #property indicator_buffers  5
@@ -84,7 +84,7 @@ enum ENUM_BREAKOUT_TRIGGER
 //| Input parameters                                                 |
 //+------------------------------------------------------------------+
 input group              "── Detection ──────────────────────────────";
-input ENUM_BREAKOUT_TRIGGER InpTrigger    = TRIGGER_SPIKE;   // Setup trigger
+input ENUM_BREAKOUT_TRIGGER InpTrigger    = TRIGGER_VPATTERN;// Setup trigger (V-pattern best on H1; Spike better on H4)
 input int                InpBreakBars     = 4;               // Breakout window (bars to confirm)
 input ENUM_DETECT_METHOD InpMethod        = METHOD_THRESHOLD;// Detection method
 input int                InpMAPeriod      = 20;             // MA period (bars)

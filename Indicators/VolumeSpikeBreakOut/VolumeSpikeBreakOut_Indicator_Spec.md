@@ -1,7 +1,7 @@
 # Volume Spike BreakOut Indicator — Technical Specification
 
 **Project:** FX Tools — MT5 Custom Indicator  
-**Version:** 1.00  
+**Version:** 1.01  
 **Status:** Active  
 **Author:** Dercio Micas  
 **Last updated:** 2026-06-08
@@ -13,6 +13,7 @@
 | Version | Date | Change |
 |---------|------|--------|
 | 1.00 | 2026-06-08 | Initial implementation. Fork of VolumeVPattern. Adds a **trigger selector** (Spike or V-pattern) and replaces the immediate trigger-bar arrow with a **breakout-of-range entry**: the first of the next `InpBreakBars` closed bars to break the trigger bar's high/low decides the direction. Backtest-driven (see §11). |
+| 1.01 | 2026-06-08 | **Default trigger changed to `V-pattern`** after 2.2-year validation (§11): on H1 it is positive net-of-cost in 6/6 segments and beats Spike. NB — on **H4 the Spike trigger is better**; keep the switch in mind per timeframe. |
 
 ---
 
@@ -127,7 +128,7 @@ to `THRESHOLD` (the backtested method).
 
 ```mql5
 // ── Detection ───────────────────────────────────────────────────────
-input ENUM_BREAKOUT_TRIGGER InpTrigger    = TRIGGER_SPIKE;    // Spike | V-pattern   (new)
+input ENUM_BREAKOUT_TRIGGER InpTrigger    = TRIGGER_VPATTERN; // Spike | V-pattern   (default V; Spike better on H4)
 input int                InpBreakBars      = 4;               // breakout window, bars  (new)
 input ENUM_DETECT_METHOD InpMethod         = METHOD_THRESHOLD;// default changed to Threshold
 input int                InpMAPeriod       = 20;
@@ -261,19 +262,31 @@ fx_tools/
 
 ## 11. Backtest Basis (why this exists)
 
-Python harness `backtest/` on XAUUSDc H1 (~5 months), threshold method, 1:3 target,
-judged on the structural bracket (stop = trigger-bar extreme) across four quarters:
+Python harness `backtest/` on XAUUSDc, threshold method, 1:3 target, judged on the
+structural bracket (stop = trigger-bar extreme), **net of a $0.40 round-trip cost**.
 
-- Candle-colour direction (the parents) went **negative in the adverse half**.
-- **Breakout entry (window = 4 bars) flipped it positive** and beat candle direction
-  on every metric in both halves.
-- **Spike trigger + breakout**: positive avg R in **4/4 quarters** (more trades,
-  higher total R) — the default.
-- **V-pattern trigger + breakout**: higher per-trade avg R and profit factor, lower
-  drawdown, but positive in 3/4 quarters (one breakeven quarter) — selectable.
+**Why breakout entry:** the parents infer direction from C1's candle colour, which
+went **negative in the adverse regime**. Breakout entry (window = 4 bars) flips it
+positive and beats candle direction on every metric — direction confirmed by price.
+The breakout stop is the spike bar's opposite extreme (a wide, high-range bar), so
+spread is <2% of risk; the edge is robust to costs (avg R barely moves to $1.50/RT).
 
-> Caveat: one symbol, one regime, gross of spread. The trigger choice (Spike vs
-> V-pattern) is left as an input so both can be A/B tested live before committing.
+**2.2-year validation** (XAUUSDc, 2024-03 → 2026-06, full cached history):
+
+| Timeframe | V-pattern (full avgR / consistency) | Spike (full avgR / consistency) | Best |
+|-----------|-------------------------------------|---------------------------------|------|
+| **H1** | **+0.219**, PF 1.33, **6/6 segments** | +0.179, PF 1.27, 5/6 | **V-pattern** |
+| M15 | +0.053, PF 1.07, 6/8 | +0.082, PF 1.12, 5/8 | both thin |
+| H4 | +0.048, PF 1.07, 3/5 | **+0.291**, PF 1.48, 3/5 | **Spike** |
+
+- The V-pattern edge is **strongest on H1** (positive every sub-period) → the default.
+- On **H4 prefer the Spike trigger**; on **M15 both are marginal** (PF ≈ 1, costs bite
+  more on small-range bars). The trigger switch exists for exactly this reason.
+- The long-run edge (avg R ≈ 0.2 on H1) is **more modest than the recent 5-month
+  window** (≈ 0.4) suggested — that window was an unusually strong gold regime.
+
+> Caveat: still one symbol, gross of swap/financing for multi-day holds. Validated
+> across period and timeframe; not yet across symbols.
 
 ---
 

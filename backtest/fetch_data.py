@@ -56,15 +56,21 @@ def main() -> None:
         mt5.symbol_select(symbol, True)
         tf = TIMEFRAMES[args.tf]
         date_from = datetime.fromisoformat(args.date_from)
-        date_to = datetime.now() + timedelta(days=1)
 
-        rates = mt5.copy_rates_range(symbol, tf, date_from, date_to)
+        # copy_rates_range is flaky on this terminal ("Invalid params"); pull by
+        # position instead, grabbing the largest block the terminal will return,
+        # then trim to the requested start date.
+        rates = None
+        for cnt in (80000, 60000, 40000, 20000, 10000, 5000, 2000):
+            rates = mt5.copy_rates_from_pos(symbol, tf, 0, cnt)
+            if rates is not None and len(rates) > 0:
+                break
         if rates is None or len(rates) == 0:
             raise SystemExit(f"No data for {symbol} {args.tf}: {mt5.last_error()}")
 
         df = pd.DataFrame(rates)
         df["time"] = pd.to_datetime(df["time"], unit="s")
-        df = df.rename(columns={"tick_volume": "tick_volume"})
+        df = df[df["time"] >= date_from].reset_index(drop=True)
         out = f"data/{symbol}_{args.tf}.csv"
         df.to_csv(out, index=False)
         print(f"Saved {len(df):,} bars  {df['time'].iloc[0]} -> {df['time'].iloc[-1]}")
