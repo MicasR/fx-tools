@@ -25,7 +25,7 @@
 //|  ** Validate in the Strategy Tester (visual) before any use. **   |
 //+------------------------------------------------------------------+
 #property copyright "Dercio Micas"
-#property version   "1.01"
+#property version   "1.02"
 
 #include <Trade\Trade.mqh>
 
@@ -218,21 +218,79 @@ void ApplyStopAll(double stop)
 }
 
 //+------------------------------------------------------------------+
-//| Lot sized so |entry-sl| risks InpRiskPct% of equity.             |
+//| Total open lots for this EA on the symbol (for the margin cap).  |
 //+------------------------------------------------------------------+
-double LotForRisk(double risk_dist)
+double OpenBookLots()
 {
-   double tickval = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
-   double ticksz  = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(risk_dist <= 0 || tickval <= 0 || ticksz <= 0) return 0.0;
-   double loss_per_lot = (risk_dist / ticksz) * tickval;
-   double risk_money   = AccountInfoDouble(ACCOUNT_EQUITY) * InpRiskPct / 100.0;
-   double lot = risk_money / loss_per_lot;
+   double v = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      if(PositionGetTicket(i) == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != (long)InpMagicNumber) continue;
+      v += PositionGetDouble(POSITION_VOLUME);
+   }
+   return v;
+}
+
+//+------------------------------------------------------------------+
+//| Embedded from Dercio Micas' SameRiskLotSizing::CalculateSafeLotSize|
+//| Risk-% lot, but capped by a margin-call-safe lot (so a losing    |
+//| book can't be margin-called before its stops hit). totalLots =   |
+//| the symbol's already-open lots; stopLossPoints in TICK_SIZE units.|
+//+------------------------------------------------------------------+
+double CalculateSafeLotSize(double riskPercent, string symbol, int stopLossPoints,
+                            ENUM_ORDER_TYPE orderType, double marginCallLevelPercent,
+                            double totalLots, double riskAmount)
+{
+   double bid       = SymbolInfoDouble(symbol, SYMBOL_BID);
+   double ask       = SymbolInfoDouble(symbol, SYMBOL_ASK);
+   double price     = (orderType == ORDER_TYPE_SELL) ? bid : ask;
+   double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize  = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(riskPercent <= 0 || stopLossPoints <= 0 || tickValue <= 0 || tickSize <= 0 || price <= 0)
+      return 0.0;
+
+   double tickRatio  = tickValue / tickSize;
+   double stopLoss   = stopLossPoints * SymbolInfoDouble(symbol, SYMBOL_POINT);
+   double equity     = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(riskAmount == 0) riskAmount = equity * (riskPercent / 100.0);
+   double lossPerLot = stopLoss * tickRatio;
+   if(lossPerLot <= 0) return 0.0;
+
+   double mrgCall    = marginCallLevelPercent / 100.0;
+   double marg       = AccountInfoDouble(ACCOUNT_MARGIN);
+   double margPerLot = 0.0;
+   if(!OrderCalcMargin(orderType, symbol, 1, price, margPerLot))
+      margPerLot = 0.0;               // margin term drops out; risk-lot still capped by equity
+
+   double riskLot     = riskAmount / lossPerLot;
+   double denom       = mrgCall * margPerLot + lossPerLot;
+   double margCallLot = (denom > 0)
+                        ? ((equity - lossPerLot * totalLots) - mrgCall * marg) / denom
+                        : riskLot;
+
+   double lot = (margCallLot < riskLot) ? margCallLot : riskLot;   // safer of the two
+   return (lot > 0) ? lot : 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Risk-% lot for a |price-sl| stop. Skips if margin-unsafe (<=0);  |
+//| floors a sub-min risk-lot to the broker minimum (allowed).       |
+//+------------------------------------------------------------------+
+double LotForRisk(double risk_dist, ENUM_ORDER_TYPE ot)
+{
+   double ticksz = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   if(risk_dist <= 0 || ticksz <= 0) return 0.0;
+   int    slpts   = (int)MathRound(risk_dist / ticksz);
+   double stopOut = AccountInfoDouble(ACCOUNT_MARGIN_SO_SO) + 5.0;
+   double lot = CalculateSafeLotSize(InpRiskPct, _Symbol, slpts, ot, stopOut, OpenBookLots(), 0);
+   if(lot <= 0) return 0.0;             // margin-unsafe / invalid → skip
    double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
    double minl = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxl = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    lot = MathFloor(lot / step) * step;
-   if(lot < minl) lot = minl;          // floor: tiny accounts may exceed RiskPct
+   if(lot < minl) lot = minl;           // min lot allowed (per user)
    if(lot > maxl) lot = maxl;
    return lot;
 }
@@ -242,7 +300,7 @@ double LotForRisk(double risk_dist)
 //+------------------------------------------------------------------+
 void ArmStop(bool is_buy, double price, double sl)
 {
-   double lot = LotForRisk(MathAbs(price - sl));
+   double lot = LotForRisk(MathAbs(price - sl), is_buy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
    if(lot <= 0) return;
    price = NormalizeDouble(price, _Digits);
    sl    = NormalizeDouble(sl, _Digits);
