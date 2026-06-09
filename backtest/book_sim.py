@@ -111,17 +111,17 @@ def simulate(d, cost, mode):
                     book = [new_pos(e, e["sl"], e["entry"] + e["d"] * RR * e["rng"])]
                     book_dir = e["d"]
                 # same side → ignore
-            elif mode in ("confA", "confB"):
+            elif mode in ("confA", "confB", "confBdiv"):
                 if not book:
                     tp = e["entry"] + e["d"] * RR * e["rng"]
                     book = [new_pos(e, e["sl"], tp)]
                     book_dir = e["d"]
-                elif e["d"] == book_dir:
+                elif e["d"] == book_dir:                       # confluent → pyramid
                     new_sl = e["sl"]
                     locked = (all(new_sl >= p["entry"] for p in book) if book_dir == 1
                               else all(new_sl <= p["entry"] for p in book))
                     if locked:
-                        if mode == "confB":
+                        if mode in ("confB", "confBdiv"):
                             new_tp = e["entry"] + e["d"] * RR * e["rng"]
                             for p in book: p["tp"] = new_tp
                             add_tp = new_tp
@@ -129,7 +129,11 @@ def simulate(d, cost, mode):
                             add_tp = book[0]["tp"]
                         for p in book: p["sl"] = new_sl
                         book.append(new_pos(e, new_sl, add_tp))
-                # contrary → ignore
+                elif mode == "confBdiv":                       # opposite → reverse book
+                    for p in book: shut(p, k, e["entry"])
+                    book = [new_pos(e, e["sl"], e["entry"] + e["d"] * RR * e["rng"])]
+                    book_dir = e["d"]
+                # else contrary → ignore
 
     for p in book:
         shut(p, n - 1, C[n - 1])
@@ -156,7 +160,7 @@ def run(sym, cost, segments=6):
     print(f"\n================ {sym}  (cost ${cost})  ================")
     print(f"{'mode':<8}{'n':>5}{'totR':>8}{'avgR':>8}{'PF':>6}{'maxDD':>7}{'win%':>6}  per-segment totR (+/6)")
     for mode, lbl in [("fix", "3RR"), ("trail", "2.5trail"), ("div", "diverge"),
-                      ("confA", "confA"), ("confB", "confB")]:
+                      ("confA", "confA"), ("confB", "confB"), ("confBdiv", "confB+div")]:
         closed = simulate(d, cost, mode)
         s = stats(closed)
         seg_tot = []
