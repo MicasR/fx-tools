@@ -59,6 +59,7 @@ def simulate(d, cost, mode):
 
     book = []          # open positions
     book_dir = 0
+    b_sl = b_ext = b_rng = b_stop = 0.0   # confBtrail shared-stop state
     closed = []        # (entry_bar, exit_bar, R)
 
     def shut(p, xbar, xprice):
@@ -71,29 +72,46 @@ def simulate(d, cost, mode):
 
     for k in range(n):
         # ---- 1) exits ----
-        survivors = []
-        for p in book:
-            done = False
-            if mode == "trail":
-                if p["d"] == 1:
-                    stop = max(p["sl"], p["ext"] - TRAIL * p["rng"])
-                    if L[k] <= stop: shut(p, k, stop); done = True
-                    else: p["ext"] = max(p["ext"], H[k])
+        if mode == "confBtrail":
+            if book:                       # one shared stop for the whole book
+                if book_dir == 1:
+                    b_stop = max(b_stop, b_sl, b_ext - TRAIL * b_rng)
+                    if L[k] <= b_stop:
+                        for p in book: shut(p, k, b_stop)
+                        book = []
+                    else:
+                        b_ext = max(b_ext, H[k])
                 else:
-                    stop = min(p["sl"], p["ext"] + TRAIL * p["rng"])
-                    if H[k] >= stop: shut(p, k, stop); done = True
-                    else: p["ext"] = min(p["ext"], L[k])
-            else:
-                if p["d"] == 1:
-                    hs, ht = L[k] <= p["sl"], (p["tp"] is not None and H[k] >= p["tp"])
+                    b_stop = min(b_stop, b_sl, b_ext + TRAIL * b_rng)
+                    if H[k] >= b_stop:
+                        for p in book: shut(p, k, b_stop)
+                        book = []
+                    else:
+                        b_ext = min(b_ext, L[k])
+        else:
+            survivors = []
+            for p in book:
+                done = False
+                if mode == "trail":
+                    if p["d"] == 1:
+                        stop = max(p["sl"], p["ext"] - TRAIL * p["rng"])
+                        if L[k] <= stop: shut(p, k, stop); done = True
+                        else: p["ext"] = max(p["ext"], H[k])
+                    else:
+                        stop = min(p["sl"], p["ext"] + TRAIL * p["rng"])
+                        if H[k] >= stop: shut(p, k, stop); done = True
+                        else: p["ext"] = min(p["ext"], L[k])
                 else:
-                    hs, ht = H[k] >= p["sl"], (p["tp"] is not None and L[k] <= p["tp"])
-                if hs: shut(p, k, p["sl"]); done = True
-                elif ht: shut(p, k, p["tp"]); done = True
-            if not done and k - p["entry_bar"] >= MAXHOLD:
-                shut(p, k, C[k]); done = True
-            if not done: survivors.append(p)
-        book = survivors
+                    if p["d"] == 1:
+                        hs, ht = L[k] <= p["sl"], (p["tp"] is not None and H[k] >= p["tp"])
+                    else:
+                        hs, ht = H[k] >= p["sl"], (p["tp"] is not None and L[k] <= p["tp"])
+                    if hs: shut(p, k, p["sl"]); done = True
+                    elif ht: shut(p, k, p["tp"]); done = True
+                if not done and k - p["entry_bar"] >= MAXHOLD:
+                    shut(p, k, C[k]); done = True
+                if not done: survivors.append(p)
+            book = survivors
         if not book: book_dir = 0
 
         # ---- 2) entries filling at bar k ----
@@ -134,6 +152,20 @@ def simulate(d, cost, mode):
                     book = [new_pos(e, e["sl"], e["entry"] + e["d"] * RR * e["rng"])]
                     book_dir = e["d"]
                 # else contrary → ignore
+            elif mode == "confBtrail":
+                if not book:
+                    book = [new_pos(e, e["sl"], None)]
+                    book_dir = e["d"]
+                    b_sl = e["sl"]; b_ext = e["entry"]; b_rng = e["rng"]; b_stop = e["sl"]
+                elif e["d"] == book_dir:                        # confluent → pyramid
+                    new_sl = e["sl"]
+                    locked = (all(new_sl >= p["entry"] for p in book) if book_dir == 1
+                              else all(new_sl <= p["entry"] for p in book))
+                    if locked:
+                        book.append(new_pos(e, new_sl, None))
+                        b_sl = new_sl; b_rng = e["rng"]
+                        b_stop = max(b_stop, new_sl) if book_dir == 1 else min(b_stop, new_sl)
+                # contrary → ignore
 
     for p in book:
         shut(p, n - 1, C[n - 1])
@@ -160,7 +192,8 @@ def run(sym, cost, segments=6):
     print(f"\n================ {sym}  (cost ${cost})  ================")
     print(f"{'mode':<8}{'n':>5}{'totR':>8}{'avgR':>8}{'PF':>6}{'maxDD':>7}{'win%':>6}  per-segment totR (+/6)")
     for mode, lbl in [("fix", "3RR"), ("trail", "2.5trail"), ("div", "diverge"),
-                      ("confA", "confA"), ("confB", "confB"), ("confBdiv", "confB+div")]:
+                      ("confA", "confA"), ("confB", "confB"), ("confBdiv", "confB+div"),
+                      ("confBtrail", "confB+trl")]:
         closed = simulate(d, cost, mode)
         s = stats(closed)
         seg_tot = []
