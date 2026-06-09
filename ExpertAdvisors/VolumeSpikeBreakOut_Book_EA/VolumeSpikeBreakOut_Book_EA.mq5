@@ -25,7 +25,7 @@
 //|  ** Validate in the Strategy Tester (visual) before any use. **   |
 //+------------------------------------------------------------------+
 #property copyright "Dercio Micas"
-#property version   "1.00"
+#property version   "1.01"
 
 #include <Trade\Trade.mqh>
 
@@ -85,48 +85,57 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   datetime cb = iTime(_Symbol, _Period, 0);
-   if(cb == g_last_bar) return;
-   g_last_bar = cb;
-
    double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    int    count, dir;
    double max_long, min_short, anchor;
    ScanBook(count, dir, max_long, min_short, anchor);
 
-   // ---- fill / close detection via count change ----
-   if(count > g_count)                       // an order filled
+   // ===================== EVERY TICK: book management =====================
+   // (fill/close detection, sibling cancel, SL sync — must be prompt, not per-bar)
+   if(count > g_count)                          // an order filled
    {
-      if(g_count == 0)                        // new book opened
+      if(g_count == 0)                           // new book opened
       {
          g_dir  = dir;
          g_bsl  = (dir == 1) ? g_pL : g_pH;
          g_brng = g_pR;
-         g_bext = anchor;                      // single entry = book extreme seed
+         g_bext = anchor;                         // single entry = book extreme seed
          g_bstop = g_bsl;
-         DeletePendings(dir == 1 ? 2 : 1);     // kill the opposite (sibling) leg
       }
-      else                                     // add filled
+      else                                        // add filled
       {
          g_bsl  = (g_dir == 1) ? g_pL : g_pH;
          g_brng = g_pR;
          g_bstop = (g_dir == 1) ? MathMax(g_bstop, g_bsl) : MathMin(g_bstop, g_bsl);
       }
    }
-   else if(count < g_count && count == 0)     // whole book closed out
+   else if(count < g_count && count == 0)        // whole book closed out
    {
       g_dir = 0; g_bstop = g_bext = g_bsl = g_brng = 0;
       DeletePendings(0);
    }
    g_count = count;
 
+   if(count > 0)
+   {
+      ApplyStopAll(NormalizeDouble(g_bstop, _Digits));  // sync ALL SLs (incl. just-added) every tick
+      DeletePendings(g_dir == 1 ? 2 : 1);               // kill contrary/sibling leg at once
+   }
+
+   // ===================== NEW BAR ONLY: trail ratchet + signals =====================
+   datetime cb = iTime(_Symbol, _Period, 0);
+   if(cb == g_last_bar) return;
+   g_last_bar = cb;
+
    bool time_ok = IsInTimeWindow(TimeCurrent());
    bool spread_ok = (InpMaxSpread == -1 ||
                      (int)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD) <= InpMaxSpread);
+   // bars-since-arm via iBarShift (gap-immune; wall-clock/PeriodSeconds over-counts on gaps)
+   bool stale = (CountPendings() > 0 &&
+                 iBarShift(_Symbol, _Period, g_arm_bar, false) >= InpBreakBars);
 
    if(count > 0)
    {
-      // ---- trail the whole book ----
       if(g_dir == 1)
       {
          g_bext  = MathMax(g_bext, iHigh(_Symbol, _Period, 1));
@@ -138,13 +147,8 @@ void OnTick()
          g_bstop = MathMin(g_bstop, MathMin(g_bsl, g_bext + InpTrailMult * g_brng));
       }
       ApplyStopAll(NormalizeDouble(g_bstop, _Digits));
-      DeletePendings(g_dir == 1 ? 2 : 1);      // no contrary pendings while in a book
+      if(stale) DeletePendings(0);
 
-      // expire an un-filled add
-      if(CountPendings() > 0 && (cb - g_arm_bar) / PeriodSeconds(_Period) > InpBreakBars)
-         DeletePendings(0);
-
-      // ---- arm a confluent add (BE-gated) ----
       bool cap_ok = (InpMaxPositions <= 0 || count < InpMaxPositions);
       if(CountPendings() == 0 && time_ok && spread_ok && cap_ok && IsTriggerBar())
       {
@@ -160,8 +164,7 @@ void OnTick()
    }
    else   // flat
    {
-      if(CountPendings() > 0 && (cb - g_arm_bar) / PeriodSeconds(_Period) > InpBreakBars)
-         DeletePendings(0);
+      if(stale) DeletePendings(0);
       if(CountPendings() == 0 && time_ok && spread_ok && IsTriggerBar())
       {
          double th = iHigh(_Symbol, _Period, 1), tl = iLow(_Symbol, _Period, 1);

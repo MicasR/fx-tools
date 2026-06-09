@@ -13,6 +13,7 @@
 | Version | Date | Change |
 |---------|------|--------|
 | 1.00 | 2026-06-09 | Initial implementation of the **confB+trail** book strategy: pyramid into the trend on BE-gated confluent breakouts, trail the whole book out with one shared chandelier stop, **risk-% per-trade sizing**. The best mode in the `book_sim.py` study (gold & BTC). Separate from the single-setup `VolumeSpikeBreakOut_EA`, which is preserved. |
+| 1.01 | 2026-06-09 | **Bug fixes from first tester run.** Moved order/position management (fill detection, sibling-OCO cancel, SL sync to all positions) out of the new-bar gate to run **every tick** — previously the un-taken twin leg lingered and SLs lagged up to a full bar. Pending-expiry now counts **actual bars via `iBarShift`** instead of `(time diff)/PeriodSeconds`, which over-counted across session/weekend gaps and expired setups too early. Trail ratchet + signal arming stay per-bar (match the bar-close backtest). |
 
 ---
 
