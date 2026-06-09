@@ -61,6 +61,8 @@ def simulate(d, cost, mode):
     book_dir = 0
     b_sl = b_ext = b_rng = b_stop = 0.0   # confBtrail shared-stop state
     closed = []        # (entry_bar, exit_bar, R)
+    max_pos = 0        # peak concurrent positions
+    max_open_R = 0.0   # peak concurrent OPEN risk (R units, locked legs count 0)
 
     def shut(p, xbar, xprice):
         R = p["d"] * (xprice - p["entry"]) / p["rng"] - cost / p["rng"]
@@ -167,9 +169,18 @@ def simulate(d, cost, mode):
                         b_stop = max(b_stop, new_sl) if book_dir == 1 else min(b_stop, new_sl)
                 # contrary → ignore
 
+        # ---- 3) instrumentation: peak exposure / open risk ----
+        if book:
+            max_pos = max(max_pos, len(book))
+            openR = 0.0
+            for p in book:
+                s = b_stop if mode == "confBtrail" else p["sl"]
+                openR += max(0.0, p["d"] * (p["entry"] - s) / p["rng"])
+            max_open_R = max(max_open_R, openR)
+
     for p in book:
         shut(p, n - 1, C[n - 1])
-    return closed
+    return closed, max_pos, max_open_R
 
 
 def stats(closed):
@@ -190,19 +201,20 @@ def run(sym, cost, segments=6):
     n = len(d); q = n // segments
     bounds = [(k * q, n if k == segments - 1 else (k + 1) * q) for k in range(segments)]
     print(f"\n================ {sym}  (cost ${cost})  ================")
-    print(f"{'mode':<8}{'n':>5}{'totR':>8}{'avgR':>8}{'PF':>6}{'maxDD':>7}{'win%':>6}  per-segment totR (+/6)")
+    print(f"{'mode':<10}{'n':>5}{'totR':>8}{'avgR':>8}{'PF':>6}{'maxDD':>7}{'win%':>6}"
+          f"{'mxPos':>6}{'mxRiskR':>8}  per-segment totR (+/6)")
     for mode, lbl in [("fix", "3RR"), ("trail", "2.5trail"), ("div", "diverge"),
                       ("confA", "confA"), ("confB", "confB"), ("confBdiv", "confB+div"),
                       ("confBtrail", "confB+trl")]:
-        closed = simulate(d, cost, mode)
+        closed, mxpos, mxrisk = simulate(d, cost, mode)
         s = stats(closed)
         seg_tot = []
         for lo, hi in bounds:
             seg_tot.append(sum(r for eb, xb, r in closed if lo <= eb < hi))
         pos = sum(1 for t in seg_tot if t > 0)
         segstr = " ".join(f"{t:+5.0f}" for t in seg_tot)
-        print(f"{lbl:<8}{s['n']:>5}{s['totR']:>8.1f}{s['avgR']:>8.3f}{s['pf']:>6.2f}"
-              f"{s['maxdd']:>7.1f}{s['win']:>6.1f}  {segstr}  ({pos}/{segments})")
+        print(f"{lbl:<10}{s['n']:>5}{s['totR']:>8.1f}{s['avgR']:>8.3f}{s['pf']:>6.2f}"
+              f"{s['maxdd']:>7.1f}{s['win']:>6.1f}{mxpos:>6}{mxrisk:>8.2f}  {segstr}  ({pos}/{segments})")
 
 
 if __name__ == "__main__":
