@@ -45,12 +45,12 @@ def run_sym(d, cost, G, tp_R=0):
             if hit:
                 pnl = sum(lot * dd * (op["sl"] - e) for e, lot in op["pos"])
                 pnl -= sum(cost * lot for e, lot in op["pos"])          # round-trip cost
-                ops.append((op["ebar"], k, pnl, len(op["pos"])))
+                ops.append((op["ebar"], k, pnl, len(op["pos"]), "SL"))
                 op = None
             elif tp_hit:
                 pnl = sum(lot * dd * (tp_price - e) for e, lot in op["pos"])
                 pnl -= sum(cost * lot for e, lot in op["pos"])
-                ops.append((op["ebar"], k, pnl, len(op["pos"])))
+                ops.append((op["ebar"], k, pnl, len(op["pos"]), "TP"))
                 op = None
             else:
                 if dd == 1:
@@ -87,7 +87,7 @@ def run_sym(d, cost, G, tp_R=0):
     if op is not None:
         pnl = sum(lot * op["dir"] * (C[n - 1] - e) for e, lot in op["pos"])
         pnl -= sum(cost * lot for e, lot in op["pos"])
-        ops.append((op["ebar"], n - 1, pnl, len(op["pos"])))
+        ops.append((op["ebar"], n - 1, pnl, len(op["pos"]), "END"))
     return ops
 
 
