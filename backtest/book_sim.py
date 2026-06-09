@@ -59,7 +59,7 @@ def simulate(d, cost, mode):
 
     book = []          # open positions
     book_dir = 0
-    b_sl = b_ext = b_rng = b_stop = 0.0   # confBtrail shared-stop state
+    b_sl = b_ext = b_rng = b_stop = b_first = 0.0   # confBtrail shared-stop state
     closed = []        # (entry_bar, exit_bar, R)
     max_pos = 0        # peak concurrent positions
     max_open_R = 0.0   # peak concurrent OPEN risk (R units, locked legs count 0)
@@ -74,17 +74,22 @@ def simulate(d, cost, mode):
 
     for k in range(n):
         # ---- 1) exits ----
-        if mode == "confBtrail":
+        if mode in ("confBtrail", "confBtrail25"):
             if book:                       # one shared stop for the whole book
+                gate = (mode == "confBtrail25")
                 if book_dir == 1:
-                    b_stop = max(b_stop, b_sl, b_ext - TRAIL * b_rng)
+                    chand = b_ext - TRAIL * b_rng
+                    cand = b_sl if (gate and chand < b_first) else max(b_sl, chand)
+                    b_stop = max(b_stop, cand)
                     if L[k] <= b_stop:
                         for p in book: shut(p, k, b_stop)
                         book = []
                     else:
                         b_ext = max(b_ext, H[k])
                 else:
-                    b_stop = min(b_stop, b_sl, b_ext + TRAIL * b_rng)
+                    chand = b_ext + TRAIL * b_rng
+                    cand = b_sl if (gate and chand > b_first) else min(b_sl, chand)
+                    b_stop = min(b_stop, cand)
                     if H[k] >= b_stop:
                         for p in book: shut(p, k, b_stop)
                         book = []
@@ -154,11 +159,12 @@ def simulate(d, cost, mode):
                     book = [new_pos(e, e["sl"], e["entry"] + e["d"] * RR * e["rng"])]
                     book_dir = e["d"]
                 # else contrary → ignore
-            elif mode == "confBtrail":
+            elif mode in ("confBtrail", "confBtrail25"):
                 if not book:
                     book = [new_pos(e, e["sl"], None)]
                     book_dir = e["d"]
                     b_sl = e["sl"]; b_ext = e["entry"]; b_rng = e["rng"]; b_stop = e["sl"]
+                    b_first = e["entry"]
                 elif e["d"] == book_dir:                        # confluent → pyramid
                     new_sl = e["sl"]
                     locked = (all(new_sl >= p["entry"] for p in book) if book_dir == 1
@@ -174,7 +180,7 @@ def simulate(d, cost, mode):
             max_pos = max(max_pos, len(book))
             openR = 0.0
             for p in book:
-                s = b_stop if mode == "confBtrail" else p["sl"]
+                s = b_stop if mode in ("confBtrail", "confBtrail25") else p["sl"]
                 openR += max(0.0, p["d"] * (p["entry"] - s) / p["rng"])
             max_open_R = max(max_open_R, openR)
 
@@ -205,7 +211,7 @@ def run(sym, cost, segments=6):
           f"{'mxPos':>6}{'mxRiskR':>8}  per-segment totR (+/6)")
     for mode, lbl in [("fix", "3RR"), ("trail", "2.5trail"), ("div", "diverge"),
                       ("confA", "confA"), ("confB", "confB"), ("confBdiv", "confB+div"),
-                      ("confBtrail", "confB+trl")]:
+                      ("confBtrail", "confB+trl"), ("confBtrail25", "trl@2.5R")]:
         closed, mxpos, mxrisk = simulate(d, cost, mode)
         s = stats(closed)
         seg_tot = []
