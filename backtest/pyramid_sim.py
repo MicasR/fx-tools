@@ -23,8 +23,9 @@ from book_sim import entry_events
 TRAIL = 2.5     # give-back, in R (R = the operation's first-signal range)
 
 
-def run_sym(d, cost, G):
-    """Returns list of operations: (entry_bar, exit_bar, R, n_positions)."""
+def run_sym(d, cost, G, tp_R=0):
+    """Returns list of operations: (entry_bar, exit_bar, R, n_positions).
+    tp_R>0 = close the whole op when price moves tp_R*R from the first entry."""
     evs, H, L, C, n = entry_events(d)
     by_bar = defaultdict(list)
     for e in evs:
@@ -39,9 +40,16 @@ def run_sym(d, cost, G):
 
             # ---- exit check first (pessimistic: SL as it entered the bar) ----
             hit = (L[k] <= op["sl"]) if dd == 1 else (H[k] >= op["sl"])
+            tp_price = op["e0"] + dd * tp_R * r0 if tp_R > 0 else 0.0
+            tp_hit = tp_R > 0 and ((H[k] >= tp_price) if dd == 1 else (L[k] <= tp_price))
             if hit:
                 pnl = sum(lot * dd * (op["sl"] - e) for e, lot in op["pos"])
                 pnl -= sum(cost * lot for e, lot in op["pos"])          # round-trip cost
+                ops.append((op["ebar"], k, pnl, len(op["pos"])))
+                op = None
+            elif tp_hit:
+                pnl = sum(lot * dd * (tp_price - e) for e, lot in op["pos"])
+                pnl -= sum(cost * lot for e, lot in op["pos"])
                 ops.append((op["ebar"], k, pnl, len(op["pos"])))
                 op = None
             else:
@@ -72,7 +80,7 @@ def run_sym(d, cost, G):
             for e in by_bar.get(k, []):
                 if e["rng"] <= 0:
                     continue
-                op = dict(dir=e["d"], r0=e["rng"], ebar=k, ext=e["entry"],
+                op = dict(dir=e["d"], r0=e["rng"], ebar=k, ext=e["entry"], e0=e["entry"],
                           sl=e["sl"], pos=[(e["entry"], 1.0 / e["rng"])])
                 break
 
