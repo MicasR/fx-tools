@@ -167,6 +167,187 @@ def run(sym, triggers=("conf", "bounce"), ml_target=3.0, smaP=50,
     return ops, curve, peak_mtm, n
 
 
+def _size_add(sizing, pos, P, anchor, dd, E0, TR, MPL, ml_target, gb, r0, ml_now,
+              mult=1.0, prog_step=0.0, unit_lot=VOL_MIN, cap_lot=0.0):
+    """Lot for a bounce/candle add under one sizing rule (gate/cap handled by caller).
+    minlot/prog/proggeo are expressed in `unit_lot` units (VOL_MIN, or the base lot
+    for relative sizing)."""
+    L = sum(l for _, l in pos)
+    if L >= VOL_MAX:
+        return 0.0
+    cap = lambda x: (min(x, cap_lot) if cap_lot > 0 else x)       # ceiling on a single add
+    flr = lambda x: (max(VOL_MIN, qfloor(cap(x))) if x > 0 else 0.0)   # cap, then below-min -> use min
+    if sizing == "minlot":
+        return flr(unit_lot * mult)
+    if sizing == "prog":                          # arithmetic: (mult + k*step) x unit, k = add index
+        k = len(pos) - 1
+        return flr(unit_lot * (mult + k * prog_step))
+    if sizing == "proggeo":                       # geometric: mult * step^k x unit
+        k = len(pos) - 1
+        return flr(unit_lot * mult * (prog_step ** k))
+    if sizing == "mlevel":
+        return lot_to_mlevel(pos, P, dd, E0, TR, MPL, ml_target)
+    if sizing == "pinlast":                       # pin liquidation to last bounce/contrary low/high
+        S = max(ml_now, anchor) if dd == 1 else min(ml_now, anchor)
+        return lot_to_pin(pos, P, S, dd, E0, TR, MPL)
+    if sizing == "pin1R":                         # gb*R below current price
+        tgt = P - dd * gb * r0
+        S = max(ml_now, tgt) if dd == 1 else min(ml_now, tgt)
+        return lot_to_pin(pos, P, S, dd, E0, TR, MPL)
+    return 0.0
+
+
+def _rsi(close, period):
+    d = np.diff(close, prepend=close[0])
+    up = pd.Series(np.where(d > 0, d, 0.0)).ewm(alpha=1/period, adjust=False).mean().to_numpy()
+    dn = pd.Series(np.where(d < 0, -d, 0.0)).ewm(alpha=1/period, adjust=False).mean().to_numpy()
+    return 100 - 100 / (1 + up / np.where(dn == 0, 1e-9, dn))
+
+
+def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
+           smaP=50, gb=1.0, conf=False, mult=1.0, prog_step=2.0, unit="min", cap=0.0,
+           grid_R=0.5, rsiP=14, rsi_os=30.0, rsi_ob=70.0, cap0=1000.0,
+           risk_frac=0.01, half=0.5, tp_R=3.0):
+    """General stacking engine on a chosen intrabar timeframe (M1/M5/M15).
+    Base = H1 breakout (1R, TP3R, no trail).  Add triggers (any of):
+      'bounce'  -> SMA(close) cross-back, anchor = wrong-side extreme;
+      'candle'  -> confluent candle after a contrary candle, anchor = contrary extreme.
+    'conf' (separate flag) -> same-dir H1 breakout adds, pinned to its structure.
+    All adds gated: beyond the last/worst leg AND price >= half*R.  Sizing per
+    `sizing` (minlot/mlevel/pinlast/pin1R).  Floor: equity-0 stop-out = -1R."""
+    sp = SPECS[sym]; TR, MPL, COST = sp["TR"], sp["MPL"], sp["cost"]
+    m = pd.read_csv(glob.glob(f"data/*{sym}*_{tf}.csv")[0], parse_dates=["time"])
+    if "bounce" in triggers:
+        m["sma"] = m["close"].rolling(smaP).mean()
+        m = m.dropna().reset_index(drop=True)
+    tm = m["time"].to_numpy()
+    O, H, L, C = (m[c].to_numpy() for c in ("open", "high", "low", "close"))
+    SMA = m["sma"].to_numpy() if "bounce" in triggers else None
+    RSI = _rsi(C, rsiP) if "rsi" in triggers else None
+    n = len(m)
+
+    evs = h1_events(sym, m["time"].iloc[0])
+    ev_at = {}
+    for e in evs:
+        j = int(np.searchsorted(tm, np.datetime64(e[0])))
+        if 0 <= j < n:
+            ev_at.setdefault(j, []).append(e)
+
+    ops, curve, capital, op, peak = [], [], cap0, None, 0.0
+
+    def close(reason, k, xp):
+        nonlocal capital, op
+        dd, E0 = op["dir"], op["E0"]
+        floating = sum(dd * (xp - e) * l * TR for e, l in op["pos"])
+        cost = sum(COST * TR * l for _, l in op["pos"])
+        res = max(floating - cost, -E0)
+        capital += res
+        ops.append((op["k0"], k, res / E0, len(op["pos"]), reason))
+        curve.append(capital); op = None
+
+    def gate(price):
+        return (price > op["last"]) if op["dir"] == 1 else (price < op["last"])
+
+    def add(P, anchor, r0, ml):
+        base = op["pos"][0][1]
+        ulot = VOL_MIN if unit == "min" else base                 # base-lot-relative if unit='base'
+        clot = cap * base if cap > 0 else 0.0                     # ceiling = cap fraction of base lot
+        x = _size_add(sizing, op["pos"], P, anchor, op["dir"], op["E0"], TR, MPL,
+                      ml_target, gb, r0, ml, mult, prog_step, ulot, clot)
+        x = min(x, VOL_MAX - sum(l for _, l in op["pos"]))
+        if x >= VOL_STEP:
+            op["pos"].append((P, x)); op["last"] = P
+
+    for k in range(n):
+        if op is not None:
+            dd, r0 = op["dir"], op["r0"]
+            ml = margin_line(op["pos"], dd, op["E0"], TR, MPL)
+            tp = op["e0"] + dd * tp_R * r0
+            if (L[k] <= ml) if dd == 1 else (H[k] >= ml):
+                close("SL", k, ml)
+            elif (H[k] >= tp) if dd == 1 else (L[k] <= tp):
+                close("TP", k, tp)
+            else:
+                fav = dd * ((H[k] if dd == 1 else L[k]) - op["e0"]) / r0
+                if fav >= half:
+                    op["ok"] = True
+                if conf or "conf" in triggers:
+                    for e in ev_at.get(k, []):
+                        if e[1] == dd and op["ok"] and gate(e[2]) \
+                                and sum(l for _, l in op["pos"]) < VOL_MAX:
+                            if "conf" in triggers:
+                                add(e[2], e[3], r0, ml)            # schedule-sized
+                            else:
+                                x = lot_to_pin(op["pos"], e[2], e[3], dd, op["E0"], TR, MPL)
+                                if x >= VOL_STEP:
+                                    op["pos"].append((e[2], x)); op["last"] = e[2]
+                if "bounce" in triggers and op["ok"]:
+                    wrong = (C[k] < SMA[k]) if dd == 1 else (C[k] > SMA[k])
+                    back  = (C[k] >= SMA[k]) if dd == 1 else (C[k] <= SMA[k])
+                    if wrong:
+                        op["arm_b"] = True
+                        cur = op.get("anc_b")
+                        ext = L[k] if dd == 1 else H[k]
+                        op["anc_b"] = ext if cur is None else (min(cur, ext) if dd == 1 else max(cur, ext))
+                    elif back and op.get("arm_b"):
+                        op["arm_b"] = False
+                        if gate(C[k]):
+                            add(C[k], op.get("anc_b", ml), r0, ml)
+                        op["anc_b"] = None
+                if "candle" in triggers and op["ok"]:
+                    contrary  = (C[k] < O[k]) if dd == 1 else (C[k] > O[k])
+                    confluent = (C[k] > O[k]) if dd == 1 else (C[k] < O[k])
+                    if contrary:
+                        op["arm_c"] = True
+                        op["anc_c"] = L[k] if dd == 1 else H[k]
+                    elif confluent and op.get("arm_c"):
+                        op["arm_c"] = False
+                        if gate(C[k]):
+                            ml2 = margin_line(op["pos"], dd, op["E0"], TR, MPL)
+                            add(C[k], op.get("anc_c", ml2), r0, ml2)
+                if "grid" in triggers and op["ok"]:           # add every grid_R of favorable move
+                    lvl = int(fav / grid_R + 1e-9)
+                    if lvl > op.get("grid_n", 0):
+                        pl = op["e0"] + dd * lvl * grid_R * r0
+                        if gate(pl) and sum(l for _, l in op["pos"]) < VOL_MAX:
+                            add(pl, ml, r0, ml)
+                        op["grid_n"] = lvl
+                if "rsi" in triggers and op["ok"]:            # add on exit from oversold/overbought
+                    rv = RSI[k]
+                    if dd == 1:
+                        if rv < rsi_os:
+                            op["arm_r"] = True
+                        elif rv >= rsi_os and op.get("arm_r"):
+                            op["arm_r"] = False
+                            if gate(C[k]) and sum(l for _, l in op["pos"]) < VOL_MAX:
+                                add(C[k], ml, r0, ml)
+                    else:
+                        if rv > rsi_ob:
+                            op["arm_r"] = True
+                        elif rv <= rsi_ob and op.get("arm_r"):
+                            op["arm_r"] = False
+                            if gate(C[k]) and sum(l for _, l in op["pos"]) < VOL_MAX:
+                                add(C[k], ml, r0, ml)
+                adv = L[k] if dd == 1 else H[k]
+                eq = op["E0"] + sum(dd * (adv - e) * l * TR for e, l in op["pos"])
+                peak = max(peak, (op["E0"] - eq) / op["E0"])
+
+        if op is None:
+            for e in ev_at.get(k, []):
+                dd, entry, sl, rng = e[1], e[2], e[3], e[4]
+                if rng <= 0:
+                    continue
+                E0 = risk_frac * cap0
+                lot0 = max(lot_to_pin([], entry, entry - dd * rng, dd, E0, TR, MPL), VOL_MIN)
+                op = dict(dir=dd, r0=rng, e0=entry, k0=k, E0=E0,
+                          pos=[(entry, min(lot0, VOL_MAX))], ok=(half <= 0), last=entry)
+                break
+
+    if op is not None:
+        close("END", n - 1, C[n - 1])
+    return ops, curve, peak, n
+
+
 def run_h1(sym, conf=True, gate=True, geo=False, cap0=1000.0, risk_frac=0.01,
            half=0.5, tp_R=3.0):
     """Full-history H1 test: base breakout + structure-pinned same-dir CONFLUENCE
