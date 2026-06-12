@@ -28,7 +28,7 @@ def run_tf_conc(sym="XAU", tf="M15", smaP=7, slowP=0, sizing="proggeo", mult=1.0
                 prog_step=1.7, unit="base", tp_R=3.0, lev=2000.0, stack=True,
                 max_conc=1, conc_dir="same", cap0=1000.0, risk_frac=0.01,
                 half=0.5, buf=0.0, ml_target=3.0, gb=1.0, prev_fb="skip",
-                trig="bounce", nback=0):
+                trig="bounce", nback=0, trail_R=0.0):
     sp = SPECS[sym]; TR, MPL0, COST = sp["TR"], sp["MPL"], sp["cost"]
     MPL = MPL0 * 400.0 / lev if lev > 0 else 0.0
     m = pd.read_csv(glob.glob(f"data/*{sym}*_{tf}.csv")[0], parse_dates=["time"])
@@ -91,11 +91,23 @@ def run_tf_conc(sym="XAU", tf="M15", smaP=7, slowP=0, sizing="proggeo", mult=1.0
         for op in list(ops_open):
             dd, r0 = op["dir"], op["r0"]
             ml = margin_line(op["pos"], dd, op["E0"], TR, MPL)
-            tp = op["e0"] + dd * tp_R * r0
-            if (L[k] <= ml) if dd == 1 else (H[k] >= ml):
-                close(op, k, ml, "SL"); ops_open.remove(op); continue
-            if (H[k] >= tp) if dd == 1 else (L[k] <= tp):
-                close(op, k, tp, "TP"); ops_open.remove(op); continue
+            if trail_R > 0:        # chandelier trail; stop = max(liquidation, ext - trail_R*R)
+                trail = op["ext"] - dd * trail_R * r0            # from prior-bar extreme
+                stop = max(ml, trail) if dd == 1 else min(ml, trail)
+                if (L[k] <= stop) if dd == 1 else (H[k] >= stop):
+                    rsn = "TR" if ((trail > ml) if dd == 1 else (trail < ml)) else "SL"
+                    close(op, k, stop, rsn); ops_open.remove(op); continue
+                if tp_R > 0:       # optional TP backstop
+                    tp = op["e0"] + dd * tp_R * r0
+                    if (H[k] >= tp) if dd == 1 else (L[k] <= tp):
+                        close(op, k, tp, "TP"); ops_open.remove(op); continue
+                op["ext"] = max(op["ext"], H[k]) if dd == 1 else min(op["ext"], L[k])
+            else:
+                tp = op["e0"] + dd * tp_R * r0
+                if (L[k] <= ml) if dd == 1 else (H[k] >= ml):
+                    close(op, k, ml, "SL"); ops_open.remove(op); continue
+                if (H[k] >= tp) if dd == 1 else (L[k] <= tp):
+                    close(op, k, tp, "TP"); ops_open.remove(op); continue
             fav = dd * ((H[k] if dd == 1 else L[k]) - op["e0"]) / r0
             if fav >= half:
                 op["ok"] = True
@@ -149,7 +161,7 @@ def run_tf_conc(sym="XAU", tf="M15", smaP=7, slowP=0, sizing="proggeo", mult=1.0
                 lot0 = min(lot0, qfloor(E0 / MPL))
             lot0 = min(lot0, VOL_MAX)
             ops_open.append(dict(dir=d, r0=rng, e0=entry, k0=k, E0=E0,
-                                 pos=[(entry, lot0)], ok=(half <= 0), last=entry,
+                                 pos=[(entry, lot0)], ok=(half <= 0), last=entry, ext=entry,
                                  log=[(k, entry, lot0)], arm_b=False, anc_b=None, prev_anc=None))
 
     for op in ops_open:
