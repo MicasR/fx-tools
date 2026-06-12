@@ -46,9 +46,28 @@ comparison table printed to the console.
   `s[i-2] > s[i-1]` and `s[i] > s[i-1]` and `(s[i]-s[i-1])/|s[i-1]| ≥ rise`.
 - Both enter at the **next bar's open**; direction = signal bar's candle colour.
 
-## Status / next
+## Status / next (updated 2026-06-12)
 
-- [x] venv, deps, data fetch, signal ports, evaluator, charts written
-- [ ] **First full run pending** (interrupted before fetch completed)
-- [ ] Inspect charts, sanity-check signal counts vs the MT5 chart
-- [ ] Tune evaluation (exit rule / horizons) and add Percentile/RVOL/Threshold sweeps
+This harness long outgrew the original indicator A/B test. It is now the research
+bed for the **VolumeSpikeBreakOut** breakout system and its two-account / stacking
+/ portfolio extensions. The per-step research log lives in the git history (one
+commit per result); the headlines:
+
+- **Validated edge:** H1 V-pattern *breakout* entry, deploy only on persistent
+  trenders (gold, BTC); never mean-reverting FX crosses.
+- **👑 Current king (gold, in-sample):** a **shield+sword trio** run as three
+  concurrent ops-accounts into one Main account, sized to a drawdown budget —
+  `geo1.7` 45% + `geofloor f5/s210 1.5%` 45% + `TP2.0 shield` 10%. Ranking metric
+  is **geometric growth-at-matched-DD** (raw totR inverts under compounding).
+  Standard robustness exam = spread-stress @ $0.40 (`stress_audit.py`).
+- **BTC:** parked at its H1 additive self-funding pyramid (TP5R, G0.25, 2.5R trail).
+
+Key research artifacts: `pyramid_engine.py` (`run_tf` stacking engine),
+`conc_engine.py` (concurrent ops), `shield.py`, `concurrent_geo.py` (geometric
+scale-to-DD), `king_harden.py`, `stress_audit.py`, `symbol_specs.py` (live broker
+specs). EAs in `../ExpertAdvisors/`.
+
+Backlog (the stack): (1) a 2nd diversification style, (2) sword diversity,
+(3) BTC trailing handoff, (4) cross-instrument king+BTC, (5) **EAs → DEMO
+forward test** — the honest out-of-sample gate (everything above is in-sample,
+one gold regime).
