@@ -27,7 +27,8 @@ from pyramid_engine import (SPECS, VOL_MIN, VOL_STEP, VOL_MAX, qfloor,
 def run_tf_conc(sym="XAU", tf="M15", smaP=7, slowP=0, sizing="proggeo", mult=1.0,
                 prog_step=1.7, unit="base", tp_R=3.0, lev=2000.0, stack=True,
                 max_conc=1, conc_dir="same", cap0=1000.0, risk_frac=0.01,
-                half=0.5, buf=0.0, ml_target=3.0, gb=1.0, prev_fb="skip"):
+                half=0.5, buf=0.0, ml_target=3.0, gb=1.0, prev_fb="skip",
+                trig="bounce", nback=0):
     sp = SPECS[sym]; TR, MPL0, COST = sp["TR"], sp["MPL"], sp["cost"]
     MPL = MPL0 * 400.0 / lev if lev > 0 else 0.0
     m = pd.read_csv(glob.glob(f"data/*{sym}*_{tf}.csv")[0], parse_dates=["time"])
@@ -99,31 +100,36 @@ def run_tf_conc(sym="XAU", tf="M15", smaP=7, slowP=0, sizing="proggeo", mult=1.0
             if fav >= half:
                 op["ok"] = True
             if stack and op["ok"]:
-                wrong = (C[k] < SMA[k]) if dd == 1 else (C[k] > SMA[k])
-                back  = (C[k] >= SMA[k]) if dd == 1 else (C[k] <= SMA[k])
-                if wrong:
-                    op["arm_b"] = True
-                    cur = op.get("anc_b"); ext = L[k] if dd == 1 else H[k]
-                    op["anc_b"] = ext if cur is None else (min(cur, ext) if dd == 1 else max(cur, ext))
-                elif back and op.get("arm_b"):
-                    op["arm_b"] = False
-                    cur_anc = op.get("anc_b")
-                    gated = (C[k] > op["last"]) if dd == 1 else (C[k] < op["last"])
-                    if gated and sizing == "pinprev":
-                        # margin line at the PREVIOUS bounce extreme if it's beyond the
-                        # current retracement extreme (lower-low for longs / higher-high
-                        # for shorts); else fallback: skip, or pin to the current extreme.
-                        prev = op.get("prev_anc")
-                        beyond = prev is not None and ((prev < cur_anc) if dd == 1 else (prev > cur_anc))
-                        S = prev if beyond else (cur_anc if prev_fb == "current" else None)
-                        if S is not None:
-                            pin_add(op, k, C[k], S)
-                    elif gated:
-                        anc = SLOW[k] if slowP > 0 else (cur_anc if cur_anc is not None else ml)
+                gated = (C[k] > op["last"]) if dd == 1 else (C[k] < op["last"])
+                # nback>0 -> margin-line anchor = the low/high N candles back (structural)
+                nb = (L[k - nback] if dd == 1 else H[k - nback]) if (nback > 0 and k >= nback) else None
+                if trig == "poscandle":               # add on EVERY confluent candle
+                    confluent = (C[k] > O[k]) if dd == 1 else (C[k] < O[k])
+                    if confluent and gated:
+                        anc = nb if nb is not None else (SLOW[k] if slowP > 0 else ml)
                         do_add(op, k, C[k], anc, r0, ml)
-                    if cur_anc is not None:
-                        op["prev_anc"] = cur_anc          # current retracement -> previous
-                    op["anc_b"] = None
+                else:                                 # SMA bounce (wrong-side then back)
+                    wrong = (C[k] < SMA[k]) if dd == 1 else (C[k] > SMA[k])
+                    back  = (C[k] >= SMA[k]) if dd == 1 else (C[k] <= SMA[k])
+                    if wrong:
+                        op["arm_b"] = True
+                        cur = op.get("anc_b"); ext = L[k] if dd == 1 else H[k]
+                        op["anc_b"] = ext if cur is None else (min(cur, ext) if dd == 1 else max(cur, ext))
+                    elif back and op.get("arm_b"):
+                        op["arm_b"] = False
+                        cur_anc = op.get("anc_b")
+                        if gated and sizing == "pinprev":
+                            prev = op.get("prev_anc")
+                            beyond = prev is not None and ((prev < cur_anc) if dd == 1 else (prev > cur_anc))
+                            S = prev if beyond else (cur_anc if prev_fb == "current" else None)
+                            if S is not None:
+                                pin_add(op, k, C[k], S)
+                        elif gated:
+                            anc = nb if nb is not None else (SLOW[k] if slowP > 0 else (cur_anc if cur_anc is not None else ml))
+                            do_add(op, k, C[k], anc, r0, ml)
+                        if cur_anc is not None:
+                            op["prev_anc"] = cur_anc
+                        op["anc_b"] = None
         # 2. new H1 breakouts open NEW ops (cap + direction policy)
         for e in ev_at.get(k, []):
             if len(ops_open) >= max_conc:
