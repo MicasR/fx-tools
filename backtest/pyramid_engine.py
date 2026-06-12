@@ -59,7 +59,7 @@ def lot_to_pin(pos, P, S, dd, E0, TR, MPL):
     if denom >= 0:
         return 0.0
     x = (-E0 - TR * A) / denom
-    return max(0.0, qfloor(min(x, VOL_MAX - L)))
+    return max(0.0, qfloor(min(x, VOL_MAX)))         # per-position cap; total uncapped (volume_limit=0)
 
 
 def lot_to_mlevel(pos, P, dd, E0, TR, MPL, ml_target):
@@ -67,7 +67,7 @@ def lot_to_mlevel(pos, P, dd, E0, TR, MPL, ml_target):
     L = sum(l for _, l in pos)
     equity = E0 + sum(dd * (P - e) * l * TR for e, l in pos)
     x = equity / (MPL * ml_target) - L
-    return max(0.0, qfloor(min(x, VOL_MAX - L)))
+    return max(0.0, qfloor(min(x, VOL_MAX)))         # per-position cap; total uncapped (volume_limit=0)
 
 
 def h1_events(sym, m1_start):
@@ -174,9 +174,6 @@ def _size_add(sizing, pos, P, anchor, dd, E0, TR, MPL, ml_target, gb, r0, ml_now
     for relative sizing).  buf > 0 (price units) = a minimum BUFFER: the pinned
     liquidation line can never sit closer than `buf` to the current price, so a
     slow SMA hugging price can't demand a margin-maxed lot (caps the pin-family)."""
-    L = sum(l for _, l in pos)
-    if L >= VOL_MAX:
-        return 0.0
     cap = lambda x: (min(x, cap_lot) if cap_lot > 0 else x)       # ceiling on a single add
     flr = lambda x: (max(VOL_MIN, qfloor(cap(x))) if x > 0 else 0.0)   # cap, then below-min -> use min
     def floored_anchor(a):                                        # keep line >= buf from price
@@ -280,7 +277,7 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
         clot = cap * base if cap > 0 else 0.0                     # ceiling = cap fraction of base lot
         x = _size_add(sizing, op["pos"], P, anchor, op["dir"], op["E0"], TR, MPL,
                       ml_target, gb, r0, ml, mult, prog_step, ulot, clot, buf)
-        x = min(x, VOL_MAX - sum(l for _, l in op["pos"]))
+        x = min(x, VOL_MAX)                                       # per-position cap (each add = own position)
         # broker check: the add's margin must fit in free margin (equity incl. float
         # minus used margin) or the order is rejected
         if MPL > 0:
@@ -306,8 +303,7 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
                     op["ok"] = True
                 if conf or "conf" in triggers:
                     for e in ev_at.get(k, []):
-                        if e[1] == dd and op["ok"] and gate(e[2]) \
-                                and sum(l for _, l in op["pos"]) < VOL_MAX:
+                        if e[1] == dd and op["ok"] and gate(e[2]):
                             if "conf" in triggers:
                                 add(e[2], e[3], r0, ml)            # schedule-sized
                             else:
@@ -343,7 +339,7 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
                     lvl = int(fav / grid_R + 1e-9)
                     if lvl > op.get("grid_n", 0):
                         pl = op["e0"] + dd * lvl * grid_R * r0
-                        if gate(pl) and sum(l for _, l in op["pos"]) < VOL_MAX:
+                        if gate(pl):
                             add(pl, ml, r0, ml)
                         op["grid_n"] = lvl
                 if "rsi" in triggers and op["ok"]:            # add on exit from oversold/overbought
@@ -353,14 +349,14 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
                             op["arm_r"] = True
                         elif rv >= rsi_os and op.get("arm_r"):
                             op["arm_r"] = False
-                            if gate(C[k]) and sum(l for _, l in op["pos"]) < VOL_MAX:
+                            if gate(C[k]):
                                 add(C[k], ml, r0, ml)
                     else:
                         if rv > rsi_ob:
                             op["arm_r"] = True
                         elif rv <= rsi_ob and op.get("arm_r"):
                             op["arm_r"] = False
-                            if gate(C[k]) and sum(l for _, l in op["pos"]) < VOL_MAX:
+                            if gate(C[k]):
                                 add(C[k], ml, r0, ml)
                 adv = L[k] if dd == 1 else H[k]
                 eq = op["E0"] + sum(dd * (adv - e) * l * TR for e, l in op["pos"])
