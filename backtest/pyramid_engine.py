@@ -168,15 +168,19 @@ def run(sym, triggers=("conf", "bounce"), ml_target=3.0, smaP=50,
 
 
 def _size_add(sizing, pos, P, anchor, dd, E0, TR, MPL, ml_target, gb, r0, ml_now,
-              mult=1.0, prog_step=0.0, unit_lot=VOL_MIN, cap_lot=0.0):
+              mult=1.0, prog_step=0.0, unit_lot=VOL_MIN, cap_lot=0.0, buf=0.0):
     """Lot for a bounce/candle add under one sizing rule (gate/cap handled by caller).
     minlot/prog/proggeo are expressed in `unit_lot` units (VOL_MIN, or the base lot
-    for relative sizing)."""
+    for relative sizing).  buf > 0 (price units) = a minimum BUFFER: the pinned
+    liquidation line can never sit closer than `buf` to the current price, so a
+    slow SMA hugging price can't demand a margin-maxed lot (caps the pin-family)."""
     L = sum(l for _, l in pos)
     if L >= VOL_MAX:
         return 0.0
     cap = lambda x: (min(x, cap_lot) if cap_lot > 0 else x)       # ceiling on a single add
     flr = lambda x: (max(VOL_MIN, qfloor(cap(x))) if x > 0 else 0.0)   # cap, then below-min -> use min
+    def floored_anchor(a):                                        # keep line >= buf from price
+        return (min(a, P - buf) if dd == 1 else max(a, P + buf)) if buf > 0 else a
     if sizing == "minlot":
         return flr(unit_lot * mult)
     if sizing == "prog":                          # arithmetic: (mult + k*step) x unit, k = add index
@@ -197,12 +201,12 @@ def _size_add(sizing, pos, P, anchor, dd, E0, TR, MPL, ml_target, gb, r0, ml_now
     if sizing == "geopin":                        # geometric ramp, each add capped so the
         k = len(pos) - 1                          # line never crosses the anchor
         g = flr(unit_lot * mult * (prog_step ** k))
-        S = max(ml_now, anchor) if dd == 1 else min(ml_now, anchor)
+        S = floored_anchor(max(ml_now, anchor) if dd == 1 else min(ml_now, anchor))
         return min(g, lot_to_pin(pos, P, S, dd, E0, TR, MPL))
     if sizing == "geofloor":                      # geometric ramp OR pin-to-anchor,
         k = len(pos) - 1                          # whichever is bigger
         g = flr(unit_lot * mult * (prog_step ** k))
-        S = max(ml_now, anchor) if dd == 1 else min(ml_now, anchor)
+        S = floored_anchor(max(ml_now, anchor) if dd == 1 else min(ml_now, anchor))
         return max(g, lot_to_pin(pos, P, S, dd, E0, TR, MPL))
     if sizing == "pinfrac":                       # pin the line gb of the way line -> price
         S = ml_now + gb * (P - ml_now)
@@ -220,7 +224,7 @@ def _rsi(close, period):
 def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
            smaP=50, slowP=0, gb=1.0, conf=False, mult=1.0, prog_step=2.0, unit="min",
            cap=0.0, grid_R=0.5, rsiP=14, rsi_os=30.0, rsi_ob=70.0, cap0=1000.0,
-           risk_frac=0.01, half=0.5, tp_R=3.0, lev=400.0):
+           risk_frac=0.01, half=0.5, tp_R=3.0, lev=400.0, buf=0.0):
     """General stacking engine on a chosen intrabar timeframe (M1/M5/M15).
     Base = H1 breakout (1R, TP3R, no trail).  Add triggers (any of):
       'bounce'  -> SMA(close) cross-back, anchor = wrong-side extreme;
@@ -275,7 +279,7 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
         ulot = VOL_MIN if unit == "min" else base                 # base-lot-relative if unit='base'
         clot = cap * base if cap > 0 else 0.0                     # ceiling = cap fraction of base lot
         x = _size_add(sizing, op["pos"], P, anchor, op["dir"], op["E0"], TR, MPL,
-                      ml_target, gb, r0, ml, mult, prog_step, ulot, clot)
+                      ml_target, gb, r0, ml, mult, prog_step, ulot, clot, buf)
         x = min(x, VOL_MAX - sum(l for _, l in op["pos"]))
         # broker check: the add's margin must fit in free margin (equity incl. float
         # minus used margin) or the order is rejected
