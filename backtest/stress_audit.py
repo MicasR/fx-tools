@@ -15,8 +15,10 @@ HDR = (f"{'variant':<24}{'thr$':>6}{'flips':>6}{'totR':>9}{'win%':>6}{'PF':>6}"
        f"{'maxDD':>7}{'RF':>7}{'segs':>6}{'1op':>6}   per-segment R")
 
 
-def op_gap(o, H, L):
-    """Closest $ between price and the op's liquidation line over its life."""
+def op_gap(o, H, L, tr=1.0):
+    """Closest $ between price and the op's liquidation line over its life.
+    tr = symbol TR ($ P&L per 1.0 price move per lot); MUST match the symbol
+    (gold TR=1.0 default; BTC TR=0.01) or the liquidation line is mis-scaled."""
     info = o[5]
     dd, E0, log = info["dir"], info["E0"], info["log"]
     k0, k1 = o[0], o[1]
@@ -27,7 +29,7 @@ def op_gap(o, H, L):
             pos.append((adds[ai][1], adds[ai][2])); ai += 1
         if not pos:
             continue
-        ml = margin_line(pos, dd, E0, 1.0, 0.0)
+        ml = margin_line(pos, dd, E0, tr, 0.0)
         gap = (L[j] - ml) if dd == 1 else (ml - H[j])
         mg = min(mg, gap)
     return mg
