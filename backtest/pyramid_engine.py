@@ -194,6 +194,19 @@ def _size_add(sizing, pos, P, anchor, dd, E0, TR, MPL, ml_target, gb, r0, ml_now
         tgt = P - dd * gb * r0
         S = max(ml_now, tgt) if dd == 1 else min(ml_now, tgt)
         return lot_to_pin(pos, P, S, dd, E0, TR, MPL)
+    if sizing == "geopin":                        # geometric ramp, each add capped so the
+        k = len(pos) - 1                          # line never crosses the anchor
+        g = flr(unit_lot * mult * (prog_step ** k))
+        S = max(ml_now, anchor) if dd == 1 else min(ml_now, anchor)
+        return min(g, lot_to_pin(pos, P, S, dd, E0, TR, MPL))
+    if sizing == "geofloor":                      # geometric ramp OR pin-to-anchor,
+        k = len(pos) - 1                          # whichever is bigger
+        g = flr(unit_lot * mult * (prog_step ** k))
+        S = max(ml_now, anchor) if dd == 1 else min(ml_now, anchor)
+        return max(g, lot_to_pin(pos, P, S, dd, E0, TR, MPL))
+    if sizing == "pinfrac":                       # pin the line gb of the way line -> price
+        S = ml_now + gb * (P - ml_now)
+        return lot_to_pin(pos, P, S, dd, E0, TR, MPL)
     return 0.0
 
 
@@ -205,8 +218,8 @@ def _rsi(close, period):
 
 
 def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
-           smaP=50, gb=1.0, conf=False, mult=1.0, prog_step=2.0, unit="min", cap=0.0,
-           grid_R=0.5, rsiP=14, rsi_os=30.0, rsi_ob=70.0, cap0=1000.0,
+           smaP=50, slowP=0, gb=1.0, conf=False, mult=1.0, prog_step=2.0, unit="min",
+           cap=0.0, grid_R=0.5, rsiP=14, rsi_os=30.0, rsi_ob=70.0, cap0=1000.0,
            risk_frac=0.01, half=0.5, tp_R=3.0):
     """General stacking engine on a chosen intrabar timeframe (M1/M5/M15).
     Base = H1 breakout (1R, TP3R, no trail).  Add triggers (any of):
@@ -214,15 +227,20 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
       'candle'  -> confluent candle after a contrary candle, anchor = contrary extreme.
     'conf' (separate flag) -> same-dir H1 breakout adds, pinned to its structure.
     All adds gated: beyond the last/worst leg AND price >= half*R.  Sizing per
-    `sizing` (minlot/mlevel/pinlast/pin1R).  Floor: equity-0 stop-out = -1R."""
+    `sizing` (minlot/mlevel/pinlast/pin1R/geopin/pinfrac).  slowP > 0 -> a slow
+    SMA replaces the trigger anchor for pin-family sizing (dual-SMA: fast = when
+    to add, slow = where the margin line goes).  Floor: equity-0 stop-out = -1R."""
     sp = SPECS[sym]; TR, MPL, COST = sp["TR"], sp["MPL"], sp["cost"]
     m = pd.read_csv(glob.glob(f"data/*{sym}*_{tf}.csv")[0], parse_dates=["time"])
     if "bounce" in triggers:
         m["sma"] = m["close"].rolling(smaP).mean()
-        m = m.dropna().reset_index(drop=True)
+    if slowP > 0:
+        m["slow"] = m["close"].rolling(slowP).mean()
+    m = m.dropna().reset_index(drop=True)
     tm = m["time"].to_numpy()
     O, H, L, C = (m[c].to_numpy() for c in ("open", "high", "low", "close"))
     SMA = m["sma"].to_numpy() if "bounce" in triggers else None
+    SLOW = m["slow"].to_numpy() if slowP > 0 else None
     RSI = _rsi(C, rsiP) if "rsi" in triggers else None
     n = len(m)
 
@@ -255,6 +273,11 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
         x = _size_add(sizing, op["pos"], P, anchor, op["dir"], op["E0"], TR, MPL,
                       ml_target, gb, r0, ml, mult, prog_step, ulot, clot)
         x = min(x, VOL_MAX - sum(l for _, l in op["pos"]))
+        # broker check: the add's margin must fit in free margin (equity incl. float
+        # minus used margin) or the order is rejected
+        Lb = sum(l for _, l in op["pos"])
+        eq = op["E0"] + sum(op["dir"] * (P - e) * l * TR for e, l in op["pos"])
+        x = min(x, qfloor(max(0.0, eq / MPL - Lb)))
         if x >= VOL_STEP:
             op["pos"].append((P, x)); op["last"] = P
 
@@ -292,7 +315,8 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
                     elif back and op.get("arm_b"):
                         op["arm_b"] = False
                         if gate(C[k]):
-                            add(C[k], op.get("anc_b", ml), r0, ml)
+                            anc = SLOW[k] if slowP > 0 else op.get("anc_b", ml)
+                            add(C[k], anc, r0, ml)
                         op["anc_b"] = None
                 if "candle" in triggers and op["ok"]:
                     contrary  = (C[k] < O[k]) if dd == 1 else (C[k] > O[k])
@@ -339,8 +363,9 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
                     continue
                 E0 = risk_frac * cap0
                 lot0 = max(lot_to_pin([], entry, entry - dd * rng, dd, E0, TR, MPL), VOL_MIN)
+                lot0 = min(lot0, qfloor(E0 / MPL), VOL_MAX)   # margin must fit the deposit
                 op = dict(dir=dd, r0=rng, e0=entry, k0=k, E0=E0,
-                          pos=[(entry, min(lot0, VOL_MAX))], ok=(half <= 0), last=entry)
+                          pos=[(entry, lot0)], ok=(half <= 0), last=entry)
                 break
 
     if op is not None:
