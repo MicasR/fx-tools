@@ -263,7 +263,8 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
         cost = sum(COST * TR * l for _, l in op["pos"])
         res = max(floating - cost, -E0)
         capital += res
-        ops.append((op["k0"], k, res / E0, len(op["pos"]), reason))
+        ops.append((op["k0"], k, res / E0, len(op["pos"]), reason,
+                    dict(dir=dd, E0=E0, r0=op["r0"], e0=op["e0"], log=list(op["log"]))))
         curve.append(capital); op = None
 
     def gate(price):
@@ -284,6 +285,7 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
             x = min(x, qfloor(max(0.0, eq / MPL - Lb)))
         if x >= VOL_STEP:
             op["pos"].append((P, x)); op["last"] = P
+            op["log"].append((k, P, x))
 
     for k in range(n):
         if op is not None:
@@ -369,8 +371,9 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
                 lot0 = max(lot_to_pin([], entry, entry - dd * rng, dd, E0, TR, MPL), VOL_MIN)
                 if MPL > 0:                                   # margin must fit the deposit
                     lot0 = min(lot0, qfloor(E0 / MPL))
-                op = dict(dir=dd, r0=rng, e0=entry, k0=k, E0=E0,
-                          pos=[(entry, min(lot0, VOL_MAX))], ok=(half <= 0), last=entry)
+                lot0 = min(lot0, VOL_MAX)
+                op = dict(dir=dd, r0=rng, e0=entry, k0=k, E0=E0, pos=[(entry, lot0)],
+                          ok=(half <= 0), last=entry, log=[(k, entry, lot0)])
                 break
 
     if op is not None:
