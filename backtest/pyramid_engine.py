@@ -220,7 +220,7 @@ def _rsi(close, period):
 def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
            smaP=50, slowP=0, gb=1.0, conf=False, mult=1.0, prog_step=2.0, unit="min",
            cap=0.0, grid_R=0.5, rsiP=14, rsi_os=30.0, rsi_ob=70.0, cap0=1000.0,
-           risk_frac=0.01, half=0.5, tp_R=3.0):
+           risk_frac=0.01, half=0.5, tp_R=3.0, lev=400.0):
     """General stacking engine on a chosen intrabar timeframe (M1/M5/M15).
     Base = H1 breakout (1R, TP3R, no trail).  Add triggers (any of):
       'bounce'  -> SMA(close) cross-back, anchor = wrong-side extreme;
@@ -229,8 +229,11 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
     All adds gated: beyond the last/worst leg AND price >= half*R.  Sizing per
     `sizing` (minlot/mlevel/pinlast/pin1R/geopin/pinfrac).  slowP > 0 -> a slow
     SMA replaces the trigger anchor for pin-family sizing (dual-SMA: fast = when
-    to add, slow = where the margin line goes).  Floor: equity-0 stop-out = -1R."""
+    to add, slow = where the margin line goes).  Floor: equity-0 stop-out = -1R.
+    lev = account leverage; SPECS margins were measured at ~1:400, so the free-
+    margin check scales by 400/lev.  lev=0 -> unlimited (check disabled)."""
     sp = SPECS[sym]; TR, MPL, COST = sp["TR"], sp["MPL"], sp["cost"]
+    MPL = MPL * 400.0 / lev if lev > 0 else 0.0
     m = pd.read_csv(glob.glob(f"data/*{sym}*_{tf}.csv")[0], parse_dates=["time"])
     if "bounce" in triggers:
         m["sma"] = m["close"].rolling(smaP).mean()
@@ -275,9 +278,10 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
         x = min(x, VOL_MAX - sum(l for _, l in op["pos"]))
         # broker check: the add's margin must fit in free margin (equity incl. float
         # minus used margin) or the order is rejected
-        Lb = sum(l for _, l in op["pos"])
-        eq = op["E0"] + sum(op["dir"] * (P - e) * l * TR for e, l in op["pos"])
-        x = min(x, qfloor(max(0.0, eq / MPL - Lb)))
+        if MPL > 0:
+            Lb = sum(l for _, l in op["pos"])
+            eq = op["E0"] + sum(op["dir"] * (P - e) * l * TR for e, l in op["pos"])
+            x = min(x, qfloor(max(0.0, eq / MPL - Lb)))
         if x >= VOL_STEP:
             op["pos"].append((P, x)); op["last"] = P
 
@@ -363,9 +367,10 @@ def run_tf(sym, tf="M15", triggers=("bounce",), sizing="mlevel", ml_target=3.0,
                     continue
                 E0 = risk_frac * cap0
                 lot0 = max(lot_to_pin([], entry, entry - dd * rng, dd, E0, TR, MPL), VOL_MIN)
-                lot0 = min(lot0, qfloor(E0 / MPL), VOL_MAX)   # margin must fit the deposit
+                if MPL > 0:                                   # margin must fit the deposit
+                    lot0 = min(lot0, qfloor(E0 / MPL))
                 op = dict(dir=dd, r0=rng, e0=entry, k0=k, E0=E0,
-                          pos=[(entry, lot0)], ok=(half <= 0), last=entry)
+                          pos=[(entry, min(lot0, VOL_MAX))], ok=(half <= 0), last=entry)
                 break
 
     if op is not None:
