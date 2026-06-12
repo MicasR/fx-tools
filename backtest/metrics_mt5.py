@@ -17,7 +17,7 @@ CFG = {
     "s210":   dict(smaP=5, slowP=210, sizing="geofloor", mult=0.015, prog_step=1.7, tp_R=3.0, stack=True),
     "shield": dict(stack=False, tp_R=2.0),
 }
-WEIGHT = {"geo1.7": 0.45, "s210": 0.45, "shield": 0.10}
+WEIGHT = {"geo1.7": 0.50, "s210": 0.375, "shield": 0.125}   # crowned rounded-plateau king
 CAP0 = 1000.0
 THR = 0.40
 
@@ -131,7 +131,7 @@ def plot(fs=(0.01, 0.02)):
 
     ax1.set_yscale("log")
     ax1.set_ylabel("Balance  $  (log)")
-    ax1.set_title("KING (geo1.7 / s210 / TP2.0-shield  45/45/10) — $1000 Main, geometric, stress@$0.40")
+    ax1.set_title("KING (geo1.7 / s210 / TP2.0-shield  50/37.5/12.5) — $1000 Main, geometric, stress@$0.40")
     ax1.legend(loc="upper left", framealpha=0.9)
     ax1.grid(True, which="both", alpha=0.25)
     ax2.set_ylabel("Drawdown %"); ax2.invert_yaxis()
@@ -144,7 +144,18 @@ def plot(fs=(0.01, 0.02)):
     print("saved out/king_equity.png")
 
 
+def growth_at_dd():
+    from concurrent_geo import geo_sim, at_dd
+    S, t0, t1 = streams()                       # already stress-flipped (3-tuples)
+    legs = [([(a, b, R, None) for a, b, R in S[nm]], WEIGHT[nm]) for nm in CFG]
+    FG = [0.0005, 0.001, 0.0015, 0.002, 0.003, 0.005, 0.0075, 0.01, 0.0125, 0.015, 0.02, 0.03, 0.05]
+    cur = [(f, *geo_sim(legs, f)) for f in FG]
+    print("\n  growth-at-matched-DD (crown metric): " +
+          "  ".join(f"@{b}%={at_dd(cur, b)[0]:.1f}x" for b in (13, 18, 24, 30)))
+
+
 if __name__ == "__main__":
     report(0.01)
     report(0.02)
+    growth_at_dd()
     plot()
