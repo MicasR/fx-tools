@@ -55,7 +55,12 @@ if __name__ == "__main__":
 
     print(f"\n{'king (cap, dir)':<26}{'ops':>6}" + "".join(f"{f'@{int(b)}%':>11}" for b in BUD))
     base = {nm: conc_ops(nm, 1, "same") for nm in CFG}
-    king_row("BASELINE one-at-a-time", base)
+    # consistent-engine no-shield COMBO1 (geo .5/s210 .5) vs +shield king, same engine
+    legs0 = [(base["geo1.7"][0], 0.5), (base["s210"][0], 0.5)]
+    cur0 = [(f, *geo_sim(legs0, f)) for f in FG]
+    c0 = "".join(f"{at_dd(cur0, b)[0]:>10.1f}x" if at_dd(cur0, b) else f"{'--':>11}" for b in BUD)
+    print(f"{'COMBO1 no-shield (.5/.5)':<26}{base['geo1.7'][1]+base['s210'][1]:>6}{c0}")
+    king_row("KING +shield (one-at-once)", base)
 
     for cd in ("same", "opp", "both"):
         print(f"--- direction policy: {cd} ---")
