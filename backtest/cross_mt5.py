@@ -80,6 +80,30 @@ def report(name, legs, f):
     print(f"  Max consec wins    {mcw:>12}                          Max consec losses {mcl:>11}")
 
 
+def streak_stats(legs):
+    """Win% and consecutive-win/loss run lengths, ops ordered by close time (dial-independent)."""
+    from itertools import groupby
+    ops = sorted(((tc, R) for s, _ in legs for (to, tc, R) in s), key=lambda x: x[0])
+    signs = [1 if R > 0 else 0 for _, R in ops]
+    n = len(signs); wins = sum(signs)
+    runs_w = [sum(1 for _ in g) for k, g in groupby(signs) if k == 1]
+    runs_l = [sum(1 for _ in g) for k, g in groupby(signs) if k == 0]
+    avg = lambda r: (sum(r) / len(r)) if r else 0.0
+    return dict(n=n, win=wins / n * 100,
+                avg_w=avg(runs_w), max_w=max(runs_w) if runs_w else 0, n_w=len(runs_w),
+                avg_l=avg(runs_l), max_l=max(runs_l) if runs_l else 0, n_l=len(runs_l))
+
+
+def streak_report():
+    print("\n=== consecutive WIN / LOSS streaks per operation (dial-independent) ===")
+    print(f"{'portfolio':<16}{'ops':>6}{'win%':>7}{'avg cWin':>10}{'max cWin':>10}{'#Wstreaks':>11}"
+          f"{'avg cLoss':>11}{'max cLoss':>11}")
+    for name, legs in PORTS.items():
+        s = streak_stats(legs)
+        print(f"{name:<16}{s['n']:>6}{s['win']:>6.1f}%{s['avg_w']:>10.2f}{s['max_w']:>10}{s['n_w']:>11}"
+              f"{s['avg_l']:>11.2f}{s['max_l']:>11}")
+
+
 def plot(f=0.02):
     import os, matplotlib
     matplotlib.use("Agg")
