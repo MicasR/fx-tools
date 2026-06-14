@@ -240,3 +240,60 @@ V-pattern ENTRY), the M15 management bars, and the simulated intrabar path. Ther
 So the build order next session: dump M1 → **derive H1/M15 from it** → confirm M1 spans the
 full window AND M1→H1 `tick_volume` reconciles → build the M1-intrabar engine on this shared
 data → compare to tester **Model 1** (same M1 source) under NBP. Same data in, same ops out.
+
+## M1 ROUTE BUILT & TESTED — falls short of <5% (2026-06-14)
+Full-window M1 dumped via `Scripts/DumpHistory.mq5` (XAU 781,650 bars 2024-03-26→2026-06-12;
+BTC 1,241,703 bars 2024-02-01→2026-06-13 — cap busted, 90k→780k/1.24M). Tooling built:
+`m1_data.py` (derive H1/M15 from M1), `m1_engine.py` (M1-intrabar engine), `m1_validate.py`,
+`m1_vs_conc.py`, `m1_decomp.py`, `m1_diag.py`.
+
+**DATA PARITY confirmed & a suspect cleared:** M1→H1 `tick_volume` reconciles **100% identical**
+(both symbols) and the V-pattern entry sets are **identical on the overlap** (0 "old-only" diffs).
+So the old separately-pulled H1 CSV's tick_volume was **NOT** the entry-set gap (FINDINGS' prior
+"prime suspect" is falsified). The gap is purely intrabar mechanics.
+
+**The M1-intrabar engine** (entries fill at first M1 touch via the EA's flat→pending→in-op state
+machine with `InpBreakBars=4`; SL/TP/chandelier-trail checked every M1; chandelier `ext` ratcheted
+on mgmt-bar closes; favourable gate on mgmt-bar closes; SMA-bounce adds on mgmt-bar closes — all
+verified against `CrossKing_EA.mq5` line-by-line, formulas `MarginLine`/`LotToPin`/`MarginCap`/
+`SizeAdd` match exactly). Result vs the NBP tester truth:
+
+| leg | M1 nbpR | truth | Δ% | read |
+|---|---|---|---|---|
+| BtcPG      |  40.9 |  40.6 | **+0.7%** | proggeo TP3, no trail/stack-depth → MATCHES |
+| BtcShield  |  12.2 |  16.5 | -26% | no-stack; entry-set sensitive |
+| GoldGeo17  | 149.2 | 124.3 | +20% | deep proggeo stacks |
+| GoldShield |  55.8 |  37.7 | +48% | no-stack; entry-set sensitive |
+| GoldS210   | 237.4 | 157.4 | +51% | deep geofloor stacks |
+| BtcGF      | 298.5 | 191.0 | +56% | geofloor + chandelier trail |
+
+The M1 engine moved 5/6 legs the right direction vs the bar oracle (gold dropped 178/268/86 →
+149/237/56) but **does not hit <5%**. Decomposition (`m1_decomp.py`, match on dir+e0) + pinpoint
+(`m1_diag.py`) show the residual is **sub-M1 tick ordering**, the exact "two hard sub-problems"
+this doc predicted for Path B:
+1. **Deep-stack depth sensitivity (gold geofloor/proggeo).** Adds are exponentially sized
+   (`base*mult*step^k`, step 1.7); a ±1 add-depth difference = huge R. The GoldS210 monster op
+   (e0=2971.2): M1 builds **depth 18 / +138.5R**, tester **depth 17 / +89.5R** (+49R from one
+   extra deep add). Driven by add-vs-liquidation tick ordering *within* a minute (M1 OHLC can't
+   order them). Confirmed NOT the favourable-gate timing, NOT the margin/pin formulas (all match).
+2. **Liquidation flips.** e0=2516.3: tester liquidates at depth 2 (**-1.0R**), M1 survives to
+   depth 4 (**+7.6R**) — a sub-minute tick pierces the depth-2 liquidation line before the next
+   M15-close add; M1 bars miss the ordering.
+3. **max_conc=1 trend cascade (BtcGF).** The +141R of extra ops is **+131R in a single month
+   (2026-01)**: one exit-timing difference desyncs the whole entry set through a trend, and the
+   alternate set is far more profitable. Chaotic in exit timing → needs exact ticks to match.
+
+**Bottom line: the M1-bar engine is faithful on the non-stacking/non-trailing core (BtcPG +0.7%)
+but biased high (+20..+56%) on EXACTLY the stacking/trailing knobs §3.6 wants to search.** A fast
+but biased-where-it-matters engine can't drive the king re-search. → see the fork below.
+
+## FORK (2026-06-14, awaiting user): tick route vs Path A
+- **Path A (tester-as-truth) — RECOMMENDED.** Proven exact (Model 1 ≡ Model 4 under NBP); run the
+  §3.6 management-layer re-search through the headless tester (`ck_batch.ps1`, NBP-scored via
+  `tester_truth.py`). Slower per candidate but definitive, and the M1 engine's bias is precisely on
+  the knobs we'd tune, so Path A is the trustworthy engine. Keep the M1 engine as a fast sanity
+  tool (it's correct on non-stack legs).
+- **Tick route (the plan's stated M1-fallback).** `DumpHistory.mq5 mode=TICKS` → a tick-stepped
+  engine for exact Model-4 parity. Should reproduce the tester to <5% (same tick input) and give a
+  FAST python engine — worth it ONLY if the §3.6 search is large. Cost: tick data is ~10–50× M1
+  size and a bigger build; the cascade only matches if the tick path is exact.
