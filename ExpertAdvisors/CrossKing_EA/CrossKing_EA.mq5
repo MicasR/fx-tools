@@ -97,6 +97,14 @@ bool     g_ok     = false;     // favourable gate reached (>= InpHalf*R)
 double   g_ext    = 0.0;       // running extreme since entry (for the trail)
 bool     g_arm_b  = false;     // bounce armed (price went wrong side of SMA)
 datetime g_op_open_time = 0;   // op open timestamp (telemetry)
+//--- geometric add-sizing state (latched at op-open; do NOT derive from the live
+//--- book -- MT5's PositionsTotal() order is newest-first, so ScanBook()[0] is the
+//--- most-recent add, NOT the base.  Reading the base/k off the book collapsed the
+//--- proggeo/geofloor ramp to 0.01 on every gold stack (the dominant fidelity gap;
+//--- see backtest/FIDELITY_FINDINGS.md).  Mirrors Python: base = pos[0] lot, the
+//--- geometric add index k = number of adds already placed (= len(pos)-1).
+double   g_base_lot = 0.0;     // base-position volume = geometric unit lot
+int      g_add_count = 0;      // adds placed so far = geometric index k for the next add
 
 //--- entry-arming state (pending breakout pair) ------------------------------
 datetime g_arm_bar = 0;        // H1 trigger-bar time of the live pending pair
@@ -235,14 +243,17 @@ double Flr(double x)
 
 //+------------------------------------------------------------------+
 //| Add-lot under the leg's sizing rule (proggeo / geofloor).        |
-//| base = book[0] lot ; k = current book size - 1 ; anchor = slow   |
-//| SMA (geofloor) ; free-margin cap applied by caller.              |
+//| base = g_base_lot (latched at open) ; k = g_add_count (adds so   |
+//| far) ; anchor = slow SMA (geofloor) ; free-margin cap by caller. |
+//| NB: base/k come from latched op-state, NOT lots[0]/ArraySize --   |
+//| the live book is newest-first and (with order splits) longer than |
+//| the add count, both of which break the geometric ramp.           |
 //+------------------------------------------------------------------+
 double SizeAdd(const double &entries[], const double &lots[], double P, double slow,
                int dd, double E0, double ml)
 {
-   double base = lots[0];
-   int    k    = ArraySize(lots) - 1;          // add index (0 for first add)
+   double base = g_base_lot;
+   int    k    = g_add_count;                  // add index (0 for first add)
    double g    = Flr(base * InpMult * MathPow(InpProgStep, k));
    if(InpSizing == CK_PROGGEO)
       return g;
@@ -389,6 +400,8 @@ void OnOpOpened(const double &entries[], const double &lots[])
    g_ok   = (InpHalf <= 0);
    g_ext  = g_e0;
    g_arm_b = false;
+   g_base_lot = SumLots(lots);   // book = just the base at op-open -> geometric unit lot
+   g_add_count = 0;              // no adds yet -> next add is k = 0
    g_op_open_time = TimeCurrent();
    RefreshSpecs();
    DeletePendings(g_dir == 1 ? 2 : 1);      // cancel the sibling
@@ -408,6 +421,7 @@ void OnOpClosed()
    PrintFormat("[CrossKing:%s] OP CLOSE  R=%.3f  bal=%.2f", InpLegName, realizedR, bal);
    TelemetryOpClose(realizedR);
    g_inop = false; g_dir = 0; g_e0 = g_r0 = g_E0 = g_ext = 0; g_ok = false; g_arm_b = false;
+   g_base_lot = 0.0; g_add_count = 0;
    DeletePendings(0);
 }
 
@@ -584,8 +598,9 @@ void DoAdd(const double &entries[], const double &lots[], double P)
    int n = PlaceSplit(g_dir == 1, x, "CK_" + InpLegName + "_add");
    if(n > 0)
    {
-      PrintFormat("[CrossKing:%s] ADD lot=%.2f in %d order(s) @~%.5f  depth->%d",
-                  InpLegName, x, n, P, ArraySize(lots) + n);
+      g_add_count++;        // one logical add placed -> advance the geometric index k
+      PrintFormat("[CrossKing:%s] ADD #%d lot=%.2f in %d order(s) @~%.5f  depth->%d",
+                  InpLegName, g_add_count, x, n, P, ArraySize(lots) + n);
       TelemetryOp("add");
    }
 }
@@ -635,7 +650,13 @@ void AdoptExistingOp()
    g_r0  = (sl0 > 0) ? MathAbs(g_e0 - sl0) : MathAbs(g_e0 - MarginLine(e_arr, l_arr, g_dir, g_E0));
    g_ok  = true;                                  // assume gate already passed
    g_ext = (g_dir == 1) ? iHigh(_Symbol, _Period, 0) : iLow(_Symbol, _Period, 0);
-   PrintFormat("[CrossKing:%s] ADOPTED open op dir=%d e0=%.5f R=%.5f (post-restart)", InpLegName, g_dir, g_e0, g_r0);
+   // best-effort sizing state: base = the oldest (first-opened) position's volume;
+   // k = number of adds already on the book (= positions - 1).
+   g_base_lot = OldestPositionLot();
+   if(g_base_lot <= 0) g_base_lot = l_arr[0];
+   g_add_count = MathMax(0, cnt - 1);
+   PrintFormat("[CrossKing:%s] ADOPTED open op dir=%d e0=%.5f R=%.5f base=%.2f k=%d (post-restart)",
+               InpLegName, g_dir, g_e0, g_r0, g_base_lot, g_add_count);
 }
 
 double PositionAnySL()
@@ -650,6 +671,25 @@ double PositionAnySL()
       if(sl > 0) return sl;
    }
    return 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Volume of this EA's oldest (first-opened) position = the base    |
+//| lot. Used only by AdoptExistingOp (post-restart reconstruction). |
+//+------------------------------------------------------------------+
+double OldestPositionLot()
+{
+   double lot = 0.0; datetime best = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong tk = PositionGetTicket(i);
+      if(tk == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != (long)InpMagicNumber) continue;
+      datetime t = (datetime)PositionGetInteger(POSITION_TIME);
+      if(best == 0 || t < best) { best = t; lot = PositionGetDouble(POSITION_VOLUME); }
+   }
+   return lot;
 }
 
 //+==================================================================+

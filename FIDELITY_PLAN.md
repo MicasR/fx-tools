@@ -136,9 +136,21 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
 ---
 
 ## 5. Status / artifacts
+- **§3.1 DIAGNOSIS DONE (2026-06-14) — see `backtest/FIDELITY_FINDINGS.md`.** Op-by-op
+  attribution (reconstructed the EA's op streams from the tester log, matched 1:1 to the
+  shadow oracle) found the dominant gap was **NOT** spread/commission/swap (all ≤0.06
+  R/op — H1 **falsified** via the param-free `cost_probe.py`). It was a **port bug**: the
+  EA's geometric add-ramp read the base lot off `ScanBook()[0]`, but MT5 lists positions
+  **newest-first**, so the ramp computed off the latest 0.01 add and **collapsed** on
+  every gold stack. **FIXED** (latched `g_base_lot`/`g_add_count`). Re-validation (Model
+  1): GoldGeo17 40.3→**120.9** (23%→69%), GoldS210 51.8→**153.4** (20%→59%); BTC + shields
+  unchanged; matched gold ops now reproduce Python.
+- **Residual now = §3.2 + §3.3 work:** (a) entry-set drift (gold H5: reconstructed H1
+  volume → chart gold on H1) and (b) bar-granularity path sensitivity on big stacks
+  (→ M1-intrabar Python / Model-4 tester). This is the same ~21% even faithful BtcGF loses.
 - Phase A (EA + oracle + presets) and Phase B (validation run) are **done & committed**
-  (`1b7efda`, `7b769fa`, `5d75115`). The EA is faithful in structure; the gap is the
-  cost model + gold data artifact, not the port logic.
+  (`1b7efda`, `7b769fa`, `5d75115`). The management/sizing core is now faithful on matched
+  ops; the gap is entry-set + granularity, not the port logic.
 - Tooling: `backtest/shadow_streams.py` (oracle), `backtest/out/ck_batch.ps1`
   (headless batch runner), `ExpertAdvisors/CrossKing_EA/run_test.ps1`.
 - Headless tester recipe (it's fiddly): live Exness terminal holds the data-dir lock

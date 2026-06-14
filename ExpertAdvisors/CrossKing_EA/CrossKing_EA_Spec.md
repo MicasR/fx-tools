@@ -5,9 +5,14 @@
 sizing primitives. **One EA binary, six `.set` presets** (3 gold + 3 BTC). Part of
 the live trading **system** (`SYSTEM_PLAN.md`, Phase A).
 
-> Status: built & compiles clean (0 errors / 0 warnings). **NOT yet validated** —
-> Phase B (Strategy-Tester vs `backtest/out/shadow/<leg>.csv`) is the go/no-go gate
-> before any live use.
+> Status: built & compiles clean (0 errors / 0 warnings). Phase B ran (Model 1) and
+> found a **port bug** — the geometric add-ramp computed off the wrong base lot
+> (`lots[0]` is newest-first), collapsing every gold stack to 0.01 (gold legs
+> retained only 20–43% of the oracle). **Fixed** (latched `g_base_lot`/`g_add_count`,
+> 2026-06-14); re-validation in progress. Full diagnosis: `backtest/FIDELITY_FINDINGS.md`.
+> Spread/commission/swap were **ruled out** as the gap (≤0.06 R/op). Remaining residual
+> (~the 21% even faithful BtcGF lost) = entry-set + bar-granularity, handled by
+> FIDELITY_PLAN §3.2/§3.3.
 
 ---
 
@@ -73,9 +78,18 @@ structural SL.
 3. **SMA-bounce add** (stack presets, `ok` only): close goes **wrong side** of
    `SMA(smaP)` then **back**; on the back-cross, if **gated** (`close` beyond the
    ladder extreme), add one position:
-   - **proggeo**: `lot = max(0.01, qfloor(base·mult·step^k))`, `k` = current depth−1.
+   - **proggeo**: `lot = max(0.01, qfloor(base·mult·step^k))`, where `base = g_base_lot`
+     and `k = g_add_count` — **both latched op-state, NOT read from the live book**.
+     `g_base_lot` = the base-position volume captured at op-open; `g_add_count` = the
+     number of logical adds placed so far (= Python's `len(pos)-1`). *This is a fixed
+     port bug:* MT5 lists positions newest-first, so the old `base = lots[0]` /
+     `k = ArraySize(lots)-1` read the most-recent **0.01 add** as the base and the ramp
+     collapsed to 0.01 on every gold stack (see `backtest/FIDELITY_FINDINGS.md`).
+     `g_add_count` (logical adds) also stays correct when one add is split over
+     `VOL_MAX` into several positions.
    - **geofloor**: `max(proggeo lot, lot_to_pin(book, close, S))`,
-     `S = max(margin_line, SMA(slowP))` (long) / `min(...)` (short).
+     `S = max(margin_line, SMA(slowP))` (long) / `min(...)` (short). The pin term reads
+     the live book (order-independent sums) and was always correct.
    - then the **free-margin cap** `lot ≤ qfloor(eq/MPL − openLots)`, `eq = E0 +
      floating`.
    - **per-order split** (`PlaceSplit`): the broker rejects any single order above
