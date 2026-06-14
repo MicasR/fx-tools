@@ -112,6 +112,45 @@ native to the chart (matches live `CopyTickVolume(H1)`). Re-validated Model 1:
 **Finding:** under Model 1 charting gold on H1 changes ~nothing (the tester builds
 H1 from M1 regardless of chart TF), so the gold entry-set drift is **NOT** H5 volume
 reconstruction — it is **bar-granularity / fill-path**. §3.2 is still correct (zero
-regression; matches live; required for a faithful Model-4 run). The remaining gap is
-now wholly the **granularity** residual → next: **Model 4** (tester truth) +
-**§3.3 M1-intrabar Python** (make the oracle equally path-aware), then the <5% gate.
+regression; matches live; required for a faithful Model-4 run).
+
+## Model 4 (real ticks) ≈ Model 1, and the M1-data blocker (2026-06-14)
+Ran the two extreme legs under **Model 4 (every tick, real ticks)** over the full
+window — both reproduce Model 1:
+
+| leg | oracle | tester M1 | **tester M4** | M4 retained | M4 minR |
+|---|---|---|---|---|---|
+| BtcGF    | 241.3 | 189.9 | **188.3** | 78% | −1.11 |
+| GoldS210 | 259.5 | 152.2 | **147.4** | 57% | **−2.01** |
+
+**Model 1 ≈ Model 4** (BtcGF 0.8% apart, GoldS210 3.2%), identical op-counts/win% →
+the **fast Model-1 headless tester is a faithful full-window proxy for real ticks**;
+no need to iterate on slow Model-4 runs. Both are reproducible headless over the whole
+2.2 yr (`ck_batch.ps1 -Model 1|4`).
+
+**The residual is the Python oracle being too optimistic, two parts:**
+1. **Loss overshoot** — the oracle floors every loss at exactly −1R (equity-0); the
+   tester slips/gaps *past* the synthetic margin-line SL, realizing **−1.1 to −2.0R**.
+   On a 20%-win leg (~300 losers) an average −0.2R overshoot ≈ −60R. Big.
+2. **Bar-path optimism on winners/stacks** — H1/M15 bars can't see the intrabar path,
+   so the oracle is too generous about which winners reach TP/trail and how big late
+   stacked adds get.
+
+**§3.3 blocker:** an M1-intrabar Python engine needs full-window M1, but the exported
+M1 CSVs only cover the last **~2–3 months** (terminal `copy_rates_from_pos` cache:
+XAU M1 Mar–Jun 2026, BTC M1 Apr–Jun 2026). The broker *has* full M1 (the Model-1
+tester uses it), but exporting it to CSV is non-trivial. → strategic fork (see below).
+
+## Where this leaves the plan (the fork)
+Base-fix + §3.2 closed the gold-specific **bug**; the tester (truth) now retains
+**57–78%** of the oracle, the rest being the oracle's bar-level optimism (loss
+overshoot + path). To get research onto a trustworthy footing:
+- **A — tester-as-truth:** use the headless Model-1 tester directly as the engine for
+  the §3.6 king re-search (slower per run, but definitive & full-window; Model 1 proven
+  ≈ Model 4). Drops the "<5% Python match" sub-goal as impractical given the M1 blocker.
+- **B — build §3.3:** re-export full-window M1 (fight the terminal cache), then build the
+  M1-intrabar Python engine to match the tester. Highest-fidelity fast engine; two hard
+  sub-problems first.
+- **C — calibrated correction:** build/validate the M1-intrabar engine on the ~2–3 mo
+  where M1 exists, derive a principled loss-overshoot + path correction, apply to the
+  full-window bar oracle. Pragmatic; some fudge risk (the plan warns against fudge).
