@@ -105,9 +105,11 @@ InpHeartbeatSec=30
     subprocess.run([EXE, f"/config:{ini_path}"], timeout=timeout)
     if not os.path.exists(CK_CSV):
         raise RuntimeError(f"{tag}: no ck_opt.csv produced (optimization failed?)")
+    df = pd.read_csv(CK_CSV)
+    df.insert(0, "leg", leg)            # tag for the prom-date pool (instrument + family)
+    df.insert(1, "sym", L["sym"])
     dst = f"{OUT}/{tag}.csv"
-    shutil.copy(CK_CSV, dst)
-    df = pd.read_csv(dst)
+    df.to_csv(dst, index=False)
     return df.sort_values("score", ascending=False).reset_index(drop=True)
 
 

@@ -117,6 +117,15 @@ int      g_add_count = 0;      // adds placed so far = geometric index k for the
 //--- robustness-weighted score so the MT5 optimizer surfaces robust kings, not 1-op
 //--- jackpots.  Mirrors backtest/tester_truth.py.
 double   g_opR[];              // realized R per closed op, in order
+//--- "PROM DATE" (FIDELITY §3.6): each pass also ships its performance-IN-TIME, so the
+//--- Python selector can pick a TEAM whose members lift each other on bad weeks
+//--- (empirical time-decorrelation), not by pre-assigned shield/sword roles. Calendar
+//--- WEEKLY buckets of NBP-clamped R from a fixed epoch = the common clock to align
+//--- different EAs (op index can't align across EAs; calendar time can).
+#define  CK_EPOCH   D'2024.02.26 00:00'
+#define  CK_WEEKSEC 604800
+#define  CK_NWEEK   130            // weeks 2024-02-26 .. ~2026-08 (covers the test window)
+double   g_week[CK_NWEEK];      // NBP-clamped R summed per calendar week
 
 //--- entry-arming state (pending breakout pair) ------------------------------
 datetime g_arm_bar = 0;        // H1 trigger-bar time of the live pending pair
@@ -141,6 +150,7 @@ int OnInit()
    g_trade.SetDeviationInPoints(InpDeviation);
    g_point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    ArrayResize(g_opR, 0);                       // fresh R-stream per (optimization) pass
+   ArrayInitialize(g_week, 0.0);                // fresh weekly performance vector (prom date)
    RefreshSpecs();
    PrintFormat("[CrossKing:%s] init  sym=%s chartTF=%s entryTF=%s mgmtTF=%s  stack=%d sizing=%d "
                "smaP=%d slowP=%d mult=%.4f step=%.2f tpR=%.2f trailR=%.2f  TR=%.5f MPL=%.5f",
@@ -190,14 +200,15 @@ double OnTester()
    double score = nbpR * (segpos / 6.0);            // robustness-weighted (the criterion)
    PrintFormat("[CrossKing:%s] OnTester  ops=%d nbpR=%.1f segpos=%d/6 RF=%.1f 1op=%.0f%% score=%.1f",
                InpLegName, n, nbpR, segpos, rf, 100.0 * oneop, score);
-   // ship metrics AND this pass's param values back to the terminal (the agent holds
-   // the correct Inp* for the pass; FrameInputs on the terminal is unreliable) -> OnTesterPass
-   double data[17];
+   // ship metrics, this pass's params, AND its weekly performance vector (prom date)
+   // back to the terminal (the agent holds the correct Inp*/g_week for the pass) -> OnTesterPass
+   double data[17 + CK_NWEEK];
    data[0] = score; data[1] = nbpR; data[2] = (double)segpos; data[3] = rf;
    data[4] = 100.0 * oneop; data[5] = (double)n; data[6] = win;
    data[7] = (double)InpSizing; data[8] = (double)InpSmaP; data[9] = (double)InpSlowP;
    data[10] = InpMult; data[11] = InpProgStep; data[12] = InpTpR; data[13] = InpTrailR;
    data[14] = InpHalf; data[15] = (double)InpMgmtTF; data[16] = InpStack ? 1.0 : 0.0;
+   for(int w = 0; w < CK_NWEEK; w++) data[17 + w] = g_week[w];
    FrameAdd("ck", 0, score, data);
    return score;
 }
@@ -211,10 +222,14 @@ int g_opt_fh = INVALID_HANDLE;
 
 int OnTesterInit()
 {
-   g_opt_fh = FileOpen("ck_opt.csv", FILE_WRITE | FILE_CSV | FILE_ANSI, ",");
+   g_opt_fh = FileOpen("ck_opt.csv", FILE_WRITE | FILE_TXT | FILE_ANSI);   // TXT: variable cols
    if(g_opt_fh != INVALID_HANDLE)
-      FileWrite(g_opt_fh, "pass", "score", "nbpR", "segpos", "rf", "oneop", "ops", "win",
-                "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half", "mgmtTF", "stack");
+   {
+      string hdr = "pass,score,nbpR,segpos,rf,oneop,ops,win,"
+                   "sizing,smaP,slowP,mult,step,tpR,trailR,half,mgmtTF,stack";
+      for(int w = 0; w < CK_NWEEK; w++) hdr += ",w" + IntegerToString(w);
+      FileWrite(g_opt_fh, hdr);
+   }
    return INIT_SUCCEEDED;
 }
 
@@ -223,11 +238,13 @@ void OnTesterPass()
    ulong pass; string fname; long fid; double fval; double data[];
    while(FrameNext(pass, fname, fid, fval, data))
    {
-      if(g_opt_fh != INVALID_HANDLE && ArraySize(data) >= 17)
-         FileWrite(g_opt_fh, (long)pass, data[0], data[1], (int)data[2], data[3], data[4],
-                   (int)data[5], data[6],
-                   (int)data[7], (int)data[8], (int)data[9], data[10], data[11], data[12],
-                   data[13], data[14], (int)data[15], (int)data[16]);
+      if(g_opt_fh == INVALID_HANDLE || ArraySize(data) < 17 + CK_NWEEK) continue;
+      string row = StringFormat("%d,%.4f,%.4f,%d,%.4f,%.2f,%d,%.4f,%d,%d,%d,%.5f,%.3f,%.3f,%.3f,%.3f,%d,%d",
+                   (long)pass, data[0], data[1], (int)data[2], data[3], data[4], (int)data[5], data[6],
+                   (int)data[7], (int)data[8], (int)data[9], data[10], data[11], data[12], data[13],
+                   data[14], (int)data[15], (int)data[16]);
+      for(int w = 0; w < CK_NWEEK; w++) row += "," + DoubleToString(data[17 + w], 3);
+      FileWrite(g_opt_fh, row);
    }
 }
 
@@ -514,6 +531,8 @@ void OnOpClosed()
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    double realizedR = (g_E0 > 0) ? (bal - g_bal_open) / g_E0 : 0.0;   // op PnL / 1R
    int _sz = ArraySize(g_opR); ArrayResize(g_opR, _sz + 1); g_opR[_sz] = realizedR;  // for OnTester
+   int _wk = (int)((TimeCurrent() - CK_EPOCH) / CK_WEEKSEC);                          // prom-date bucket
+   if(_wk >= 0 && _wk < CK_NWEEK) g_week[_wk] += MathMax(realizedR, -1.0);            // NBP-clamped
    PrintFormat("[CrossKing:%s] OP CLOSE  R=%.3f  bal=%.2f", InpLegName, realizedR, bal);
    TelemetryOpClose(realizedR);
    g_inop = false; g_dir = 0; g_e0 = g_r0 = g_E0 = g_ext = 0; g_ok = false; g_arm_b = false;
