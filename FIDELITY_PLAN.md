@@ -124,13 +124,20 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
 ---
 
 ## 4. Resolved decisions (2026-06-14)
-- **D4 — PATH A: the MQL5 tester IS the research engine (tester-as-truth).** We proved
-  **Model 1 ≡ Model 4** under NBP (D5), so the fast headless **Model-1** tester reproduces
-  real ticks over the full window and *is* ground truth. We therefore **retire the "<5%
-  Python-oracle match" sub-goal** (D1's gate is moot) — the Python oracle was only ever a
-  fast proxy, and its idealized numbers are now superseded. The §3.6 king re-search runs
-  candidates **through the tester** (`out/ck_batch.ps1`, read via `backtest/tester_truth.py`).
-  Aligns with the core mandate: *tester = ground truth, reality over idealized backtest.*
+- **D4 — REOPENED (2026-06-14): pursue the M1 route to make PYTHON match the tester;
+  Path A (tester-as-truth) is the FALLBACK.** The op-by-op decomposition (FINDINGS) showed
+  Python's **per-op physics already match** the tester (matched ops agree within ±12R on
+  5/6 legs); the residual is the **entry set** — an intrabar (M1) entry/exit-timing effect
+  of `max_conc=1`, i.e. a **data** gap, not a modeling gap. So:
+  - **Primary:** extract full-window **M1** (`Scripts/DumpHistory.mq5` — an in-terminal
+    MQL5 CSV dumper, the user's idea, bypassing the Python `copy_rates_from_pos` ~90k cap)
+    → build an **M1-intrabar Python engine** → verify Python ≈ NBP-tester (`tester_truth.py`).
+    If it matches, Python is the **fast** trustworthy engine and §3.6 runs in Python.
+  - **Fallback (if M1 can't be extracted):** **Path A** — the MQL5 tester *is* the research
+    engine (proven **Model 1 ≡ Model 4** under NBP; read via `tester_truth.py`); run §3.6
+    through `out/ck_batch.ps1`. Slower but definitive. Aligns with *tester = ground truth*.
+  - The "<5% Python match" is no longer a blocker to fear — it's now the **target** of the
+    M1 route (and moot under the fallback).
 - **D5 — NBP is the standard accounting.** Each ops-account is funded with exactly **1R**
   (EA-dumb model), so the broker's **negative-balance protection** caps any loss at **-1R**
   (the tester, run on a big deposit, *reports* -1.1..-2.0R overshoot; the live account
@@ -175,10 +182,24 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
   M1 only covers ~2–3 months). The *real* king legs on the trustworthy engine are **weaker
   & less robust** than the oracle claimed (e.g. GoldS210 nbpR 157 vs oracle 259, segs 3/6,
   1op 57%) — confirming the kings need re-challenging (§3.6).
-- **NEXT = §3.6 king re-search on the tester-truth engine:** sweep the trade-management
-  layer (stacking geometry, margin-floor, TP/trail, gate, concurrency, weights, blend) via
-  `ck_batch.ps1`, scored NBP-clamped through `tester_truth.py`, enforcing real 6-seg
-  robustness → the *true* kings → resume deployment (§3.7).
+- **▶ RESUME HERE (next session, 2026-06-14 — paused on credits):**
+  1. **Probe M1 extractability** (user not present to launch the live terminal this
+     session). Compile `Scripts/DumpHistory.mq5` (junction it into the terminal's
+     `MQL5/Scripts` per [[reference_mt5_junction_setup]], or drop it beside the EA), set
+     `InpMaxBars`→Unlimited (Tools▸Options▸Charts), run it for **XAUUSDc M1** and
+     **BTCUSDc M1** over 2024-02 → 2026-06. Copy the output CSVs from `MQL5/Files/` into
+     `backtest/data/` (rename to `<SYM>USDc_M1.csv`). Confirm they now span the full window
+     (currently only ~2–3 months — XAU M1 Mar–Jun'26, BTC M1 Apr–Jun'26).
+  2. **If full M1 obtained → build the M1-intrabar Python engine** (management cadence on
+     M15/H1, exit-check + entry-fill stepped at M1). Prototype/validate on the recent ~2–3
+     mo of M1 first (where it already exists) against the tester, then run full-window.
+     Goal: Python ≈ NBP-tester (`tester_truth.py`) per-leg → the fast trustworthy engine.
+  3. **If M1 can't be extracted → Path A fallback:** §3.6 king re-search **through the
+     tester** (`ck_batch.ps1`, NBP-scored via `tester_truth.py`).
+  4. **Then §3.6** (either engine): re-search the trade-management layer (stacking geometry,
+     margin-floor, TP/trail, gate, concurrency, weights, blend), enforcing **real** 6-seg
+     robustness (the trustworthy fingerprints are weaker: GoldS210 3/6, 1op 57%) → the
+     *true* kings → resume deployment (§3.7).
 - Phase A (EA + oracle + presets) and Phase B (validation run) are **done & committed**
   (`1b7efda`, `7b769fa`, `5d75115`). The management/sizing core is now faithful on matched
   ops; the gap is entry-set + granularity, not the port logic.

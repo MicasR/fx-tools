@@ -180,5 +180,40 @@ robust than the oracle, which is the whole reason to re-search):
 | GoldShield |  37.7 | 37.6 | 16.0 |  2.4 | 4/6 |  5% | 0.46 |
 
 **Tooling now standard:** `tester_truth.py` (canonical NBP reader/fingerprint),
-`ck_batch.ps1 -Model 1` (the research engine; reports `nbpR`). **Next: §3.6 king
-re-search on this engine.**
+`ck_batch.ps1 -Model 1` (the research engine; reports `nbpR`).
+
+## CAN PYTHON MATCH THE TESTER? — decomposition says "yes, it's a DATA problem" (2026-06-14)
+User reopened the question. Decomposed each leg's oracle−tester gap (NBP on both,
+post-base-fix) into matched-op R diff vs entry-set differences (`/tmp/decomp.py`):
+
+| leg | gap | **matched-op diff** | tester's extra ops (R) | winners tester missed (R) |
+|---|---|---|---|---|
+| GoldGeo17  | 53.7 | **0.9**  | +36 = −32 | 19 = +21 |
+| BtcGF      | 51.6 | **0.3**  | +40 = +30 | 35 = +81 |
+| GoldShield | 47.9 | **3.2**  | +56 = −14 | 46 = +30 |
+| BtcShield  | 29.4 | **−12.3**| +42 = −24 | 31 = +18 |
+| BtcPG      | 41.7 | **−4.7** | +66 = −38 | 47 = +9  |
+| GoldS210   | 110.7| **59.5** | +39 = −39 | 16 = +12 |
+
+**For 5 of 6 legs the matched ops agree within ±12R — Python's per-op physics already
+match the tester.** The gap is overwhelmingly the **entry set**: with `max_conc=1`, the
+tester closes ops intrabar, frees the single slot sooner, and catches 5–23 *more*
+breakouts per leg (which are net losers), while the two engines catch different trends.
+Only **GoldS210** has a real per-op disagreement (+59.5R, its big geofloor stacks
+realize less on the intrabar path). So the residual is **intrabar entry/exit timing**,
+needing **M1** resolution — a *data* gap, not a *modeling* gap. The broker has full M1;
+our export just capped at ~2–3 months.
+
+→ **Reopened plan (the M1 route, primary; Path A = fallback):**
+1. **Extract full-window M1** via `Scripts/DumpHistory.mq5` (user's idea: an in-terminal
+   MQL5 dumper writes CSV, bypassing the Python `copy_rates_from_pos` cap; CopyRates by
+   date range forces the download). Pull XAUUSDc + BTCUSDc M1 for the full 2.2yr.
+2. **Build the M1-intrabar Python engine** (management cadence on M15/H1, but exit-check
+   /entry-fill stepped at M1) — prototype it first on the ~2–3 mo of M1 we already have,
+   confirm it reproduces the tester there, then run full-window.
+3. **Verify Python ≈ tester** (NBP, per `tester_truth.py`). If yes → Python is the FAST
+   trustworthy engine again; do §3.6 in Python. If M1 truly can't be extracted → fall
+   back to **Path A** (tester-as-truth, already standardized).
+
+**NBP (D5) stands regardless** — it's the correct live accounting and what Python must be
+compared against.
