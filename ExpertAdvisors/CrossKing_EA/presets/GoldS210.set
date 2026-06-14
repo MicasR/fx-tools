@@ -1,0 +1,23 @@
+; CrossKing preset -- GoldS210  (XAU M15)  geofloor step1.7 / SMA5 / slow210 / TP3R
+; Attach to: XAUUSDc chart, M15 timeframe.  King-weight 0.375 (orchestrator).
+InpLegName=GoldS210
+InpMagicNumber=20260602
+InpEntryTF=16385
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=1
+InpSmaP=5
+InpSlowP=210
+InpMult=0.015
+InpProgStep=1.7
+InpHalf=0.5
+InpTpR=3.0
+InpTrailR=0.0
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

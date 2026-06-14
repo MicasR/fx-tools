@@ -6,6 +6,9 @@
 # MetaEditor backups and temp files
 *.bak
 *.tmp
+*.log
 
 # MT5 indicator/EA settings files (may contain API keys or credentials)
 *.set
+# ...except the CrossKing leg presets: pure strategy params, no credentials.
+!ExpertAdvisors/CrossKing_EA/presets/*.set

@@ -1,0 +1,23 @@
+; CrossKing preset -- BtcGF  (BTC H1)  geofloor step1.2 / SMA15 / slow210 / TRAIL 2.5R (no TP)
+; Attach to: BTCUSDc chart, H1 timeframe.  King-weight 0.552 (orchestrator).
+InpLegName=BtcGF
+InpMagicNumber=20260604
+InpEntryTF=16385
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=1
+InpSmaP=15
+InpSlowP=210
+InpMult=0.015
+InpProgStep=1.2
+InpHalf=0.5
+InpTpR=0.0
+InpTrailR=2.5
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

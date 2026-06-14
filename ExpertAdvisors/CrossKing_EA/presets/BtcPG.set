@@ -1,0 +1,23 @@
+; CrossKing preset -- BtcPG  (BTC H1)  proggeo step1.2 / SMA15 / TP3R
+; Attach to: BTCUSDc chart, H1 timeframe.  King-weight 0.248 (orchestrator).
+InpLegName=BtcPG
+InpMagicNumber=20260605
+InpEntryTF=16385
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=0
+InpSmaP=15
+InpSlowP=0
+InpMult=0.01
+InpProgStep=1.2
+InpHalf=0.5
+InpTpR=3.0
+InpTrailR=0.0
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30
