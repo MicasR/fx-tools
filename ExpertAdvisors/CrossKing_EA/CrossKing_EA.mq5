@@ -112,6 +112,12 @@ datetime g_op_open_time = 0;   // op open timestamp (telemetry)
 double   g_base_lot = 0.0;     // base-position volume = geometric unit lot
 int      g_add_count = 0;      // adds placed so far = geometric index k for the next add
 
+//--- OnTester scoring: chronological per-op realized-R stream (FIDELITY §3.6 search).
+//--- OnTester NBP-clamps it (loss capped at -1R, the live accounting) and returns a
+//--- robustness-weighted score so the MT5 optimizer surfaces robust kings, not 1-op
+//--- jackpots.  Mirrors backtest/tester_truth.py.
+double   g_opR[];              // realized R per closed op, in order
+
 //--- entry-arming state (pending breakout pair) ------------------------------
 datetime g_arm_bar = 0;        // H1 trigger-bar time of the live pending pair
 double   g_pH = 0, g_pL = 0, g_pR = 0;   // armed trigger high/low/range
@@ -134,6 +140,7 @@ int OnInit()
    g_trade.SetExpertMagicNumber(InpMagicNumber);
    g_trade.SetDeviationInPoints(InpDeviation);
    g_point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   ArrayResize(g_opR, 0);                       // fresh R-stream per (optimization) pass
    RefreshSpecs();
    PrintFormat("[CrossKing:%s] init  sym=%s chartTF=%s entryTF=%s mgmtTF=%s  stack=%d sizing=%d "
                "smaP=%d slowP=%d mult=%.4f step=%.2f tpR=%.2f trailR=%.2f  TR=%.5f MPL=%.5f",
@@ -146,6 +153,88 @@ int OnInit()
 }
 
 void OnDeinit(const int reason) {}
+
+//+==================================================================+
+//|  OnTester — the FIDELITY §3.6 search criterion.                  |
+//|  NBP-clamp the op R-stream (loss capped at -1R = live accounting),|
+//|  then return a robustness-weighted score: nbpR * (positive 6-seg  |
+//|  count / 6).  This rewards BOTH magnitude and 6-segment robustness|
+//|  so the optimizer surfaces durable kings, not single-op jackpots. |
+//|  Finalists are re-run single-pass for the full fingerprint + the   |
+//|  portfolio blend (Python).  Mirrors backtest/tester_truth.py.     |
+//+==================================================================+
+double OnTester()
+{
+   int n = ArraySize(g_opR);
+   if(n <= 0) return 0.0;
+   double nbpR = 0.0, cum = 0.0, peak = 0.0, dd = 0.0, mx = -1e18;
+   for(int i = 0; i < n; i++)
+   {
+      double r = MathMax(g_opR[i], -1.0);          // negative-balance protection
+      nbpR += r;
+      cum += r; if(cum > peak) peak = cum; if(peak - cum > dd) dd = peak - cum;
+      if(r > mx) mx = r;
+   }
+   // positive 6-segment count (equal-count chunks, chronological)
+   int q = n / 6, segpos = 0;
+   for(int k = 0; k < 6; k++)
+   {
+      int a = k * q, b = (k == 5) ? n : (k + 1) * q;
+      double s = 0.0; for(int i = a; i < b; i++) s += MathMax(g_opR[i], -1.0);
+      if(s > 0) segpos++;
+   }
+   int wins = 0; for(int i = 0; i < n; i++) if(g_opR[i] > 0) wins++;
+   double win   = 100.0 * wins / n;
+   double rf    = (dd > 0) ? nbpR / dd : 0.0;
+   double oneop = (nbpR > 0) ? mx / nbpR : 0.0;
+   double score = nbpR * (segpos / 6.0);            // robustness-weighted (the criterion)
+   PrintFormat("[CrossKing:%s] OnTester  ops=%d nbpR=%.1f segpos=%d/6 RF=%.1f 1op=%.0f%% score=%.1f",
+               InpLegName, n, nbpR, segpos, rf, 100.0 * oneop, score);
+   // ship metrics AND this pass's param values back to the terminal (the agent holds
+   // the correct Inp* for the pass; FrameInputs on the terminal is unreliable) -> OnTesterPass
+   double data[17];
+   data[0] = score; data[1] = nbpR; data[2] = (double)segpos; data[3] = rf;
+   data[4] = 100.0 * oneop; data[5] = (double)n; data[6] = win;
+   data[7] = (double)InpSizing; data[8] = (double)InpSmaP; data[9] = (double)InpSlowP;
+   data[10] = InpMult; data[11] = InpProgStep; data[12] = InpTpR; data[13] = InpTrailR;
+   data[14] = InpHalf; data[15] = (double)InpMgmtTF; data[16] = InpStack ? 1.0 : 0.0;
+   FrameAdd("ck", 0, score, data);
+   return score;
+}
+
+//+------------------------------------------------------------------+
+//| Optimization result collection (terminal side). Frames from every|
+//| pass (local + MQL5 Cloud) -> one CSV row per pass with its inputs.|
+//| -> MQL5/Files/ck_opt.csv ; the harness copies it out per sweep.  |
+//+------------------------------------------------------------------+
+int g_opt_fh = INVALID_HANDLE;
+
+int OnTesterInit()
+{
+   g_opt_fh = FileOpen("ck_opt.csv", FILE_WRITE | FILE_CSV | FILE_ANSI, ",");
+   if(g_opt_fh != INVALID_HANDLE)
+      FileWrite(g_opt_fh, "pass", "score", "nbpR", "segpos", "rf", "oneop", "ops", "win",
+                "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half", "mgmtTF", "stack");
+   return INIT_SUCCEEDED;
+}
+
+void OnTesterPass()
+{
+   ulong pass; string fname; long fid; double fval; double data[];
+   while(FrameNext(pass, fname, fid, fval, data))
+   {
+      if(g_opt_fh != INVALID_HANDLE && ArraySize(data) >= 17)
+         FileWrite(g_opt_fh, (long)pass, data[0], data[1], (int)data[2], data[3], data[4],
+                   (int)data[5], data[6],
+                   (int)data[7], (int)data[8], (int)data[9], data[10], data[11], data[12],
+                   data[13], data[14], (int)data[15], (int)data[16]);
+   }
+}
+
+void OnTesterDeinit()
+{
+   if(g_opt_fh != INVALID_HANDLE) { FileClose(g_opt_fh); g_opt_fh = INVALID_HANDLE; }
+}
 
 //+------------------------------------------------------------------+
 //| Read TR ($/1.0px/lot) and MPL (margin/lot) from the symbol, or   |
@@ -424,6 +513,7 @@ void OnOpClosed()
 {
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    double realizedR = (g_E0 > 0) ? (bal - g_bal_open) / g_E0 : 0.0;   // op PnL / 1R
+   int _sz = ArraySize(g_opR); ArrayResize(g_opR, _sz + 1); g_opR[_sz] = realizedR;  // for OnTester
    PrintFormat("[CrossKing:%s] OP CLOSE  R=%.3f  bal=%.2f", InpLegName, realizedR, bal);
    TelemetryOpClose(realizedR);
    g_inop = false; g_dir = 0; g_e0 = g_r0 = g_E0 = g_ext = 0; g_ok = false; g_arm_b = false;
