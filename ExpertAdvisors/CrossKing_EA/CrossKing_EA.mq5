@@ -72,6 +72,7 @@ input double             InpTpR           = 3.0;             // Fixed TP in R (0
 input double             InpTrailR        = 0.0;             // Chandelier trail in R (0 = none)
 
 input group              "== Specs / risk (1:2000 assumed) =="
+input double             InpFixedE0       = 0.0;             // Fixed 1R in $ (0 = whole balance/LIVE; >0 = tester validation)
 input double             InpTROverride    = 0.0;             // TR $/1.0px/lot override (0 = read live)
 input double             InpMPLOverride   = 0.0;             // Margin/lot override (0 = read live)
 input int                InpDeviation     = 50;              // Max slippage (points)
@@ -90,7 +91,8 @@ bool     g_inop   = false;     // is an operation open
 int      g_dir    = 0;         // +1 long / -1 short
 double   g_e0     = 0.0;       // base entry price
 double   g_r0     = 0.0;       // R in price units (H1 trigger range)
-double   g_E0     = 0.0;       // 1R in $ = account balance at op-open
+double   g_E0     = 0.0;       // 1R in $ (whole balance at op-open, or InpFixedE0)
+double   g_bal_open = 0.0;     // account balance at op-open (for realized-R = PnL/E0)
 bool     g_ok     = false;     // favourable gate reached (>= InpHalf*R)
 double   g_ext    = 0.0;       // running extreme since entry (for the trail)
 bool     g_arm_b  = false;     // bounce armed (price went wrong side of SMA)
@@ -145,6 +147,17 @@ void RefreshSpecs()
    double px  = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    if(!OrderCalcMargin(ORDER_TYPE_BUY, _Symbol, 1.0, px, mpl)) mpl = 0.0;
    g_MPL = (InpMPLOverride > 0) ? InpMPLOverride : mpl;
+}
+
+//+------------------------------------------------------------------+
+//| 1R in $ for a new op. LIVE: whole account balance (the orchestrator|
+//| keeps the account ~1R). TESTER: InpFixedE0 > 0 pins E0 constant so |
+//| the lone account does not self-compound (no orchestrator sweep) -- |
+//| matches the backtest's fixed E0 = risk_frac*cap0.                  |
+//+------------------------------------------------------------------+
+double OpE0()
+{
+   return (InpFixedE0 > 0) ? InpFixedE0 : AccountInfoDouble(ACCOUNT_BALANCE);
 }
 
 //+------------------------------------------------------------------+
@@ -207,7 +220,7 @@ double LotToPin(const double &entries[], const double &lots[], double P, double 
    double denom = g_TR * dd * (S - P);
    if(denom >= 0) return 0.0;
    double x = (-E0 - g_TR * A) / denom;
-   return MathMax(0.0, QFloor(MathMin(x, VOL_MAX)));
+   return MathMax(0.0, QFloor(x));    // per-order VOL_MAX now applied at placement (PlaceSplit)
 }
 
 //+------------------------------------------------------------------+
@@ -246,12 +259,12 @@ double SizeAdd(const double &entries[], const double &lots[], double P, double s
 double MarginCap(double x, const double &entries[], const double &lots[], double P,
                  int dd, double E0)
 {
-   if(g_MPL <= 0) return MathMin(x, VOL_MAX);
+   if(g_MPL <= 0) return x;                         // no margin model -> only the split caps per order
    double Lb = SumLots(lots);
    double eq = E0;
    for(int i = 0; i < ArraySize(lots); i++) eq += dd * (P - entries[i]) * lots[i] * g_TR;
    double cap = QFloor(MathMax(0.0, eq / g_MPL - Lb));
-   return MathMin(MathMin(x, VOL_MAX), cap);
+   return MathMin(x, cap);                          // free-margin cap only; per-order VOL_MAX -> PlaceSplit
 }
 
 //+------------------------------------------------------------------+
@@ -371,7 +384,8 @@ void OnOpOpened(const double &entries[], const double &lots[])
    g_dir  = (PositionFirstType() == POSITION_TYPE_BUY) ? 1 : -1;
    g_e0   = (g_dir == 1) ? g_pH : g_pL;     // breakout level = trigger extreme
    g_r0   = g_pR;                            // H1 trigger range
-   g_E0   = AccountInfoDouble(ACCOUNT_BALANCE);   // 1R = whole account
+   g_E0   = OpE0();                          // 1R = whole balance (live) or InpFixedE0
+   g_bal_open = AccountInfoDouble(ACCOUNT_BALANCE);
    g_ok   = (InpHalf <= 0);
    g_ext  = g_e0;
    g_arm_b = false;
@@ -390,7 +404,7 @@ void OnOpOpened(const double &entries[], const double &lots[])
 void OnOpClosed()
 {
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
-   double realizedR = (g_E0 > 0) ? (bal - g_E0) / g_E0 : 0.0;
+   double realizedR = (g_E0 > 0) ? (bal - g_bal_open) / g_E0 : 0.0;   // op PnL / 1R
    PrintFormat("[CrossKing:%s] OP CLOSE  R=%.3f  bal=%.2f", InpLegName, realizedR, bal);
    TelemetryOpClose(realizedR);
    g_inop = false; g_dir = 0; g_e0 = g_r0 = g_E0 = g_ext = 0; g_ok = false; g_arm_b = false;
@@ -456,7 +470,7 @@ void EntryCadence()
 //+------------------------------------------------------------------+
 void ArmStop(bool is_buy, double price, double sl)
 {
-   double E0 = AccountInfoDouble(ACCOUNT_BALANCE);
+   double E0 = OpE0();
    double rng = MathAbs(price - sl);
    if(rng <= 0 || g_TR <= 0) return;
    double lot = E0 / (g_TR * rng);              // lot_to_pin([], entry, SL) = E0/(TR*R)
@@ -530,22 +544,48 @@ void ManagementCadence()
 }
 
 //+------------------------------------------------------------------+
-//| Place one stacking add (market order at ~close).                 |
+//| Place `total` lots as market order(s), each <= VOL_MAX (and the   |
+//| broker's SYMBOL_VOLUME_MAX): an add wanting more than the per-     |
+//| order cap is split across positions, e.g. 250 -> 200 + 50. The    |
+//| broker rejects any single order above its max, so the full desired |
+//| volume is placed in <= VOL_MAX chunks (each its own position, all  |
+//| <= the per-position cap). Returns the number of orders placed.    |
+//+------------------------------------------------------------------+
+int PlaceSplit(bool is_buy, double total, string comment)
+{
+   double step = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP); if(step <= 0) step = VOL_STEP;
+   double minl = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double bmax = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double cap  = (bmax > 0) ? MathMin(VOL_MAX, bmax) : VOL_MAX;     // per-order ceiling
+   int placed = 0, guard = 0;
+   while(total >= minl && guard++ < 1000)
+   {
+      double chunk = MathFloor(MathMin(total, cap) / step + 1e-9) * step;   // floor; never force min up
+      if(chunk < minl) break;
+      bool ok = is_buy ? g_trade.Buy(chunk, _Symbol, 0.0, 0.0, 0.0, comment)
+                       : g_trade.Sell(chunk, _Symbol, 0.0, 0.0, 0.0, comment);
+      if(!ok) break;                                                // stop on a broker rejection
+      placed++; total -= chunk;
+   }
+   return placed;
+}
+
+//+------------------------------------------------------------------+
+//| Place one stacking add (market at ~close), splitting over VOL_MAX.|
 //+------------------------------------------------------------------+
 void DoAdd(const double &entries[], const double &lots[], double P)
 {
    double slow = (InpSlowP > 0) ? SmaClose(InpSlowP, 1) : 0.0;
    double ml   = MarginLine(entries, lots, g_dir, g_E0);
    double x    = SizeAdd(entries, lots, P, slow, g_dir, g_E0, ml);
-   x = MarginCap(x, entries, lots, P, g_dir, g_E0);
+   x = MarginCap(x, entries, lots, P, g_dir, g_E0);     // free-margin cap (no per-order clamp)
    if(x < VOL_STEP) return;
-   x = NormalizeLot(x);
-   if(x <= 0) return;
-   bool ok = (g_dir == 1) ? g_trade.Buy(x, _Symbol, 0.0, 0.0, 0.0, "CK_" + InpLegName + "_add")
-                          : g_trade.Sell(x, _Symbol, 0.0, 0.0, 0.0, "CK_" + InpLegName + "_add");
-   if(ok)
+   // split a >VOL_MAX add into multiple positions (250 -> 200 + 50)
+   int n = PlaceSplit(g_dir == 1, x, "CK_" + InpLegName + "_add");
+   if(n > 0)
    {
-      PrintFormat("[CrossKing:%s] ADD lot=%.2f @~%.5f  depth->%d", InpLegName, x, P, ArraySize(lots) + 1);
+      PrintFormat("[CrossKing:%s] ADD lot=%.2f in %d order(s) @~%.5f  depth->%d",
+                  InpLegName, x, n, P, ArraySize(lots) + n);
       TelemetryOp("add");
    }
 }
@@ -590,8 +630,9 @@ void AdoptExistingOp()
    for(int i = 1; i < cnt; i++) worst = (g_dir == 1) ? MathMin(worst, e_arr[i]) : MathMax(worst, e_arr[i]);
    g_e0  = worst;
    double sl0 = PositionAnySL();
-   g_r0  = (sl0 > 0) ? MathAbs(g_e0 - sl0) : MathAbs(g_e0 - MarginLine(e_arr, l_arr, g_dir, AccountInfoDouble(ACCOUNT_BALANCE)));
-   g_E0  = AccountInfoDouble(ACCOUNT_BALANCE);   // approximation post-restart
+   g_E0  = OpE0();                                 // approximation post-restart
+   g_bal_open = AccountInfoDouble(ACCOUNT_BALANCE);
+   g_r0  = (sl0 > 0) ? MathAbs(g_e0 - sl0) : MathAbs(g_e0 - MarginLine(e_arr, l_arr, g_dir, g_E0));
    g_ok  = true;                                  // assume gate already passed
    g_ext = (g_dir == 1) ? iHigh(_Symbol, _Period, 0) : iLow(_Symbol, _Period, 0);
    PrintFormat("[CrossKing:%s] ADOPTED open op dir=%d e0=%.5f R=%.5f (post-restart)", InpLegName, g_dir, g_e0, g_r0);

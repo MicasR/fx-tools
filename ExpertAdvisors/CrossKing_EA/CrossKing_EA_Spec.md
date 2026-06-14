@@ -78,6 +78,15 @@ structural SL.
      `S = max(margin_line, SMA(slowP))` (long) / `min(...)` (short).
    - then the **free-margin cap** `lot ≤ qfloor(eq/MPL − openLots)`, `eq = E0 +
      floating`.
+   - **per-order split** (`PlaceSplit`): the broker rejects any single order above
+     `SYMBOL_VOLUME_MAX`, so a margin-capped add larger than the per-order ceiling
+     (`min(VOL_MAX=200, broker max)`) is placed as **multiple positions**, e.g.
+     `250 → 200 + 50` — the full desired volume goes on, each chunk its own position
+     (all ≤ the per-position cap). The backtest *caps a single add at 200 and drops the
+     rest*; the EA instead places the remainder, so they agree exactly whenever an add
+     is ≤ 200 (the faithful/fixed-E0 regime — the cap only binds under runaway
+     compounding). `LotToPin`/`MarginCap` therefore no longer clamp at `VOL_MAX`; that
+     ceiling now lives solely in `PlaceSplit`.
 4. **Re-sync** the shared stop/TP to the (possibly enlarged) book.
 
 ### Exit — broker orders written to every position (`ComputeStops` + `ApplyStopAll`)
