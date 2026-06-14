@@ -26,12 +26,15 @@ META = ["leg", "sym", "nbpR", "segpos", "rf", "oneop", "ops", "win",
         "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"]
 
 
-def load_pool(pattern="out/opt/pool_*.csv", min_ops=30, min_nbpR=5.0):
+def load_pool(pattern="out/opt/pool_*.csv", min_ops=30, min_nbpR=5.0, max_oneop=100.0):
+    """max_oneop: drop fragile JACKPOT candidates where a single op is > max_oneop%% of
+    the leg's totR (a pin-jackpot that won't repeat live; the weekly realized-R metric
+    also can't see a building stack's float drawdown, so these read falsely DD-free)."""
     dfs = [pd.read_csv(f) for f in glob.glob(pattern)]
     if not dfs:
         raise FileNotFoundError(pattern)
     df = pd.concat(dfs, ignore_index=True)
-    df = df[(df["ops"] >= min_ops) & (df["nbpR"] >= min_nbpR)].copy()
+    df = df[(df["ops"] >= min_ops) & (df["nbpR"] >= min_nbpR) & (df["oneop"] <= max_oneop)].copy()
     # drop exact duplicate strategies (same leg+params) keeping the best score
     keyc = ["leg", "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"]
     df = df.sort_values("score", ascending=False).drop_duplicates(keyc).reset_index(drop=True)
