@@ -1,8 +1,9 @@
 ; CrossKing preset -- GoldGeo17  (XAU M15)  proggeo step1.7 / SMA7 / TP3R
-; Attach to: XAUUSDc chart, M15 timeframe.  King-weight 0.500 (orchestrator).
+; Attach to: XAUUSDc chart, H1 timeframe.  King-weight 0.500 (orchestrator).  (mgmt TF = M15 via InpMgmtTF)
 InpLegName=GoldGeo17
 InpMagicNumber=20260601
 InpEntryTF=16385
+InpMgmtTF=15
 InpMAPeriod=20
 InpMultiplier=2.0
 InpRisePct=0.02

@@ -1,8 +1,9 @@
 ; CrossKing preset -- BtcShield  (BTC H1)  shield: single position, no adds, TP1.25R
-; Attach to: BTCUSDc chart, H1 timeframe.  King-weight 0.200 (orchestrator).
+; Attach to: BTCUSDc chart, H1 timeframe.  King-weight 0.200 (orchestrator).  (mgmt TF = H1 via InpMgmtTF)
 InpLegName=BtcShield
 InpMagicNumber=20260606
 InpEntryTF=16385
+InpMgmtTF=16385
 InpMAPeriod=20
 InpMultiplier=2.0
 InpRisePct=0.02

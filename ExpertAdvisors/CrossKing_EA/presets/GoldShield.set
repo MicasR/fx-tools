@@ -1,8 +1,9 @@
 ; CrossKing preset -- GoldShield  (XAU M15)  shield: single position, no adds, TP2.0R
-; Attach to: XAUUSDc chart, M15 timeframe.  King-weight 0.125 (orchestrator).
+; Attach to: XAUUSDc chart, H1 timeframe.  King-weight 0.125 (orchestrator).  (mgmt TF = M15 via InpMgmtTF)
 InpLegName=GoldShield
 InpMagicNumber=20260603
 InpEntryTF=16385
+InpMgmtTF=15
 InpMAPeriod=20
 InpMultiplier=2.0
 InpRisePct=0.02

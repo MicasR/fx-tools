@@ -15,20 +15,24 @@
 //|  each account with -- NOT in this EA.                              |
 //|                                                                    |
 //|  Mechanics (one operation at a time, max_conc = 1):                |
-//|   1. ENTRY (always H1, regardless of chart TF): V-pattern volume    |
+//|   CHART ON H1 ALWAYS (entry native to the chart); InpEntryTF=H1,    |
+//|   InpMgmtTF = the add/bounce/trail TF (gold M15, BTC H1). Decoupling |
+//|   chart from mgmt kills the tester's cross-TF H1-volume reconstruct  |
+//|   (FIDELITY_PLAN §3.2): live `CopyTickVolume(H1)` reads real H1 bars.|
+//|   1. ENTRY (InpEntryTF=H1, native to the H1 chart): V-pattern volume |
 //|      trigger on a closed H1 bar -> arm an OCO breakout pair (Buy    |
 //|      Stop @ trigger high, Sell Stop @ trigger low); first fill      |
 //|      starts the op, sibling cancelled; stale-cancel after 4 H1      |
 //|      bars. R = trigger H1 bar range; SL = opposite extreme.         |
 //|   2. BASE SIZE: lot0 = E0/(TR*R) (pins equity-0 to the structural   |
 //|      SL), capped by free margin and broker max.                     |
-//|   3. STACK (stack presets): on a fast-SMA close bounce (wrong side  |
-//|      then back), GATED (close beyond the last add AND op >= 0.5R    |
-//|      favourable), add one position. proggeo: base*mult*step^k;      |
+//|   3. STACK (stack presets): on a fast-SMA(InpMgmtTF) close bounce    |
+//|      (wrong side then back), GATED (close beyond the last add AND op |
+//|      >= 0.5R favourable), add one position. proggeo: base*mult*step^k|
 //|      geofloor: max(that, lot pinning equity-0 to the slow SMA).     |
 //|      Each add capped by free margin (eq/MPL - openLots).            |
 //|   4. FLOOR / EXIT: the synthetic SL = margin_line(book) (equity-0)  |
-//|      is written to EVERY position each management bar -> the whole   |
+//|      is written to EVERY position each InpMgmtTF bar -> the whole    |
 //|      book exits together at -1R. Plus, per preset, a fixed TP =     |
 //|      e0 + tp_R*R, OR a chandelier trail = max(margin_line,          |
 //|      extreme - trail_R*R) for the BTC gf leg (tp_R = 0).            |
@@ -37,7 +41,8 @@
 //|  VolumeSpikeBreakOut_Book_EA; the management core is a NEW port of  |
 //|  conc_engine, NOT the Book EA's confBtrail model.                  |
 //|                                                                    |
-//|  Scope: gold (XAU M15) & BTC (BTC H1) only. Leverage 1:2000.       |
+//|  Scope: gold (XAU, mgmt M15) & BTC (BTC, mgmt H1); CHART BOTH ON H1.|
+//|  Leverage 1:2000.                                                   |
 //|  ** Validate every preset in the Strategy Tester against           |
 //|     backtest/out/shadow/<leg>.csv BEFORE any live use. **          |
 //+------------------------------------------------------------------+
@@ -61,6 +66,7 @@ input double             InpRisePct       = 0.02;            // V rise leg (>= 2
 input int                InpBreakBars     = 4;               // Breakout window (H1 bars)
 
 input group              "== Management core (the preset knobs) =="
+input ENUM_TIMEFRAMES    InpMgmtTF        = PERIOD_M15;       // Management TF: bounce/add/trail cadence (gold M15, BTC H1)
 input bool               InpStack         = true;            // Stack adds (false = shield: single pos)
 input ENUM_CK_SIZING     InpSizing        = CK_PROGGEO;      // Add sizing (stack only)
 input int                InpSmaP          = 7;               // Fast SMA period (bounce trigger)
@@ -129,10 +135,10 @@ int OnInit()
    g_trade.SetDeviationInPoints(InpDeviation);
    g_point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
    RefreshSpecs();
-   PrintFormat("[CrossKing:%s] init  sym=%s chartTF=%s entryTF=%s  stack=%d sizing=%d "
+   PrintFormat("[CrossKing:%s] init  sym=%s chartTF=%s entryTF=%s mgmtTF=%s  stack=%d sizing=%d "
                "smaP=%d slowP=%d mult=%.4f step=%.2f tpR=%.2f trailR=%.2f  TR=%.5f MPL=%.5f",
                InpLegName, _Symbol, EnumToString((ENUM_TIMEFRAMES)_Period),
-               EnumToString(InpEntryTF), InpStack, InpSizing, InpSmaP, InpSlowP,
+               EnumToString(InpEntryTF), EnumToString(InpMgmtTF), InpStack, InpSizing, InpSmaP, InpSlowP,
                InpMult, InpProgStep, InpTpR, InpTrailR, g_TR, g_MPL);
    // adopt an already-open op (restart safety): if positions exist, resume managing.
    AdoptExistingOp();
@@ -377,8 +383,8 @@ void OnTick()
       EntryCadence();
    }
 
-   // ----- management cadence: new chart bar -> adds + stop ratchet -----
-   datetime cb = iTime(_Symbol, _Period, 0);
+   // ----- management cadence: new InpMgmtTF bar -> adds + stop ratchet -----
+   datetime cb = iTime(_Symbol, InpMgmtTF, 0);
    if(cb != g_last_mgmt)
    {
       g_last_mgmt = cb;
@@ -521,8 +527,8 @@ void ManagementCadence()
    int cnt = ScanBook(e_arr, l_arr);
    if(cnt == 0) return;
 
-   double bh = iHigh(_Symbol, _Period, 1), bl = iLow(_Symbol, _Period, 1),
-          bc = iClose(_Symbol, _Period, 1);
+   double bh = iHigh(_Symbol, InpMgmtTF, 1), bl = iLow(_Symbol, InpMgmtTF, 1),
+          bc = iClose(_Symbol, InpMgmtTF, 1);
 
    // 1) running extreme (for the chandelier trail) -- updated AFTER the bar's exit
    if(g_dir == 1) g_ext = MathMax(g_ext, bh);
@@ -618,13 +624,13 @@ double LadderExtreme(const double &entries[])
 }
 
 //+------------------------------------------------------------------+
-//| SMA of CLOSE over `period` on the chart TF, ending at shift.     |
+//| SMA of CLOSE over `period` on the management TF, ending at shift.|
 //+------------------------------------------------------------------+
 double SmaClose(int period, int shift)
 {
    if(period <= 0) return 0.0;
    double c[];
-   if(CopyClose(_Symbol, _Period, shift, period, c) < period) return 0.0;
+   if(CopyClose(_Symbol, InpMgmtTF, shift, period, c) < period) return 0.0;
    double s = 0; for(int i = 0; i < period; i++) s += c[i];
    return s / period;
 }
@@ -649,7 +655,7 @@ void AdoptExistingOp()
    g_bal_open = AccountInfoDouble(ACCOUNT_BALANCE);
    g_r0  = (sl0 > 0) ? MathAbs(g_e0 - sl0) : MathAbs(g_e0 - MarginLine(e_arr, l_arr, g_dir, g_E0));
    g_ok  = true;                                  // assume gate already passed
-   g_ext = (g_dir == 1) ? iHigh(_Symbol, _Period, 0) : iLow(_Symbol, _Period, 0);
+   g_ext = (g_dir == 1) ? iHigh(_Symbol, InpMgmtTF, 0) : iLow(_Symbol, InpMgmtTF, 0);
    // best-effort sizing state: base = the oldest (first-opened) position's volume;
    // k = number of adds already on the book (= positions - 1).
    g_base_lot = OldestPositionLot();

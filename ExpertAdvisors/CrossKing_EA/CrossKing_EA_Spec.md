@@ -34,22 +34,25 @@ down, trading continues safely; only monitoring/rebalancing pause.
 
 ## 2. The six presets (`presets/*.set`)
 
-| Preset | Symbol / chart TF | stack | sizing | smaP | slowP | mult | step | tp_R | trail_R | magic | king-wt |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| **GoldGeo17**  | XAUUSDc **M15** | yes | proggeo  | 7  | –   | 0.01  | 1.7 | 3.0  | –   | 20260601 | 0.500 |
-| **GoldS210**   | XAUUSDc **M15** | yes | geofloor | 5  | 210 | 0.015 | 1.7 | 3.0  | –   | 20260602 | 0.375 |
-| **GoldShield** | XAUUSDc **M15** | no  | –        | –  | –   | –     | –   | 2.0  | –   | 20260603 | 0.125 |
-| **BtcGF**      | BTCUSDc **H1**  | yes | geofloor | 15 | 210 | 0.015 | 1.2 | 0.0  | 2.5 | 20260604 | 0.552 |
-| **BtcPG**      | BTCUSDc **H1**  | yes | proggeo  | 15 | –   | 0.01  | 1.2 | 3.0  | –   | 20260605 | 0.248 |
-| **BtcShield**  | BTCUSDc **H1**  | no  | –        | –  | –   | –     | –   | 1.25 | –   | 20260606 | 0.200 |
+| Preset | Symbol | chart TF | mgmt TF | stack | sizing | smaP | slowP | mult | step | tp_R | trail_R | magic | king-wt |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **GoldGeo17**  | XAUUSDc | **H1** | M15 | yes | proggeo  | 7  | –   | 0.01  | 1.7 | 3.0  | –   | 20260601 | 0.500 |
+| **GoldS210**   | XAUUSDc | **H1** | M15 | yes | geofloor | 5  | 210 | 0.015 | 1.7 | 3.0  | –   | 20260602 | 0.375 |
+| **GoldShield** | XAUUSDc | **H1** | M15 | no  | –        | –  | –   | –     | –   | 2.0  | –   | 20260603 | 0.125 |
+| **BtcGF**      | BTCUSDc | **H1** | H1  | yes | geofloor | 15 | 210 | 0.015 | 1.2 | 0.0  | 2.5 | 20260604 | 0.552 |
+| **BtcPG**      | BTCUSDc | **H1** | H1  | yes | proggeo  | 15 | –   | 0.01  | 1.2 | 3.0  | –   | 20260605 | 0.248 |
+| **BtcShield**  | BTCUSDc | **H1** | H1  | no  | –        | –  | –   | –     | –   | 1.25 | –   | 20260606 | 0.200 |
 
 Entry detection is **identical across all six** (H1 V-pattern volume-threshold,
-MA20 + 2.0·popStd, rise ≥ 2%, 4-bar breakout window). The chart TF = the
-**management** timeframe; entry is **always read from H1** (`InpEntryTF`). The
-king-weight is the orchestrator's capital allocation — **not an EA input**.
+MA20 + 2.0·popStd, rise ≥ 2%, 4-bar breakout window), **always read from H1**
+(`InpEntryTF`). **Chart every preset on H1** so entry is *native to the chart*
+(matches live `CopyTickVolume(H1)`; no cross-TF reconstruction — FIDELITY_PLAN §3.2);
+management (bounce/add/trail cadence + the bounce SMA) runs off **`InpMgmtTF`** (gold
+**M15**, BTC **H1**). The king-weight is the orchestrator's capital allocation —
+**not an EA input**.
 
-Attach `GoldGeo17/GoldS210/GoldShield` to an **XAUUSDc M15** chart and
-`BtcGF/BtcPG/BtcShield` to a **BTCUSDc H1** chart, one preset per ops-account.
+Attach all six to an **H1 chart** of their symbol (XAUUSDc / BTCUSDc), one preset per
+ops-account; the gold presets set `InpMgmtTF=M15`, the BTC presets `InpMgmtTF=H1`.
 
 ---
 
@@ -172,13 +175,19 @@ Expected per-leg fingerprints (stress baked, from `shadow_streams.py`):
 - **Entry fill location**: the engine opens at the M15 bar aligned to the breakout
   H1 bar; the EA fills the resting stop at the actual intrabar cross — same price,
   near-same time.
-- **H1 tick-volume reconstruction (gold only)**: the gold legs detect on H1 while
-  the chart is M15, so the tester *reconstructs* H1 tick volume by aggregating the
-  base TF — the V-pattern threshold can differ slightly from the standalone
-  `XAUUSDc_H1.csv` the shadow used (a few entries may appear/vanish). Use the **Every
-  tick** model to make the aggregation faithful. BTC legs detect natively on H1 (chart
-  = H1) → no reconstruction, the cleanest validation. If a gold leg's *entry set*
-  drifts, this is the first suspect — not the management core.
+- **H1 tick-volume reconstruction (gold)**: *addressed by §3.2* — all legs now chart
+  on H1 so entry volume is native (`InpMgmtTF` carries M15 for gold's management). NB:
+  under **Model 1** this changed nothing (the tester builds H1 from M1 regardless of
+  chart TF — GoldGeo17 120.9→119.9, GoldS210 153.4→152.2, BTC identical), so the
+  residual gold entry-set drift is **not** volume reconstruction but bar-granularity /
+  fill-path. Charting on H1 still matters for **live** fidelity and the **Model-4**
+  (real-tick) gate, where the intrabar path is exact.
+- **Bar-granularity / fill-path (the live residual, all legs)**: the shadow oracle
+  manages on M15/H1 *bars* and is blind to the intrabar path, so it is optimistic
+  about which of SL/TP a bar hits and where late stacked adds land. This is the ~21%
+  even faithful BtcGF loses and the bulk of GoldS210's leftover (one big op's late
+  geofloor adds diverge once M15-bar path ≠ M1-tick path). Closing it needs **Model 4**
+  on the tester side + an **M1-intrabar** Python engine (FIDELITY_PLAN §3.3).
 
 **Large** divergence (totR, segment signs, win% off by a lot) = a port bug to fix,
 not drift.

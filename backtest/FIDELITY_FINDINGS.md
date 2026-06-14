@@ -97,3 +97,21 @@ entry set** (27 EA-only / 9 PY-only entries = gold H5).
 What's left is the universal entry/granularity drift (~25–40% on the thin gold
 stackers, ~21% on BTC), to be closed by the §3.2/§3.3 engine/chart changes, then
 the Model-4 <5% gate.
+
+## §3.2 done — chart on H1, manage on `InpMgmtTF` (2026-06-14)
+Added `InpMgmtTF` (gold M15, BTC H1); all six legs now **chart on H1** so entry is
+native to the chart (matches live `CopyTickVolume(H1)`). Re-validated Model 1:
+
+| leg | base-fix M1 | **§3.2 M1** | Δ |
+|---|---|---|---|
+| GoldGeo17 | 120.9 | 119.9 | −1.0 |
+| GoldS210  | 153.4 | 152.2 | −1.2 |
+| GoldShield| 35.4  | 35.4  | 0 |
+| BtcGF/BtcPG/BtcShield | 189.9/39.6/16.0 | **189.9/39.6/16.0** | 0 |
+
+**Finding:** under Model 1 charting gold on H1 changes ~nothing (the tester builds
+H1 from M1 regardless of chart TF), so the gold entry-set drift is **NOT** H5 volume
+reconstruction — it is **bar-granularity / fill-path**. §3.2 is still correct (zero
+regression; matches live; required for a faithful Model-4 run). The remaining gap is
+now wholly the **granularity** residual → next: **Model 4** (tester truth) +
+**§3.3 M1-intrabar Python** (make the oracle equally path-aware), then the <5% gate.
