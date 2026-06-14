@@ -24,6 +24,14 @@ onto the structural stop**, so a full stop-out loses `E0` = **−1R = the whole
 account**. All portfolio weighting/pooling lives in *how much cash the orchestrator
 funds each account with* — never in this EA. One EA per ops-account.
 
+**Negative-balance protection (NBP) — losses are capped at −1R.** Because the account
+*is* 1R, a liquidation that momentarily overshoots equity-0 is zeroed by the broker
+(Exness NBP): the realized loss can never exceed the account = **−1R**. The Strategy
+Tester, run on a large deposit with `InpFixedE0`, does **not** trigger NBP, so it
+*reports* losses of −1.1..−2.0R; those are a tester artifact. **All tester accounting
+must clamp each op `max(R, −1)`** to match live (`backtest/tester_truth.py`,
+`ck_batch.ps1` → `nbpR`). This clamp also makes tester Model 1 ≡ Model 4.
+
 Leverage **1:2000** on every account (the add free-margin cap assumes it).
 
 **Graceful degradation:** the EA is autonomous — it sizes off its own balance and

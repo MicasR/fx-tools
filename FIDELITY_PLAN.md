@@ -124,8 +124,23 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
 ---
 
 ## 4. Resolved decisions (2026-06-14)
-- **D1 — gap metric/bar: `totR`** is the headline. Gate = per-leg totR within **5%** vs
-  the **Model-4 (real-tick)** tester; keep the 6-segment fingerprint as a robustness check.
+- **D4 — PATH A: the MQL5 tester IS the research engine (tester-as-truth).** We proved
+  **Model 1 ≡ Model 4** under NBP (D5), so the fast headless **Model-1** tester reproduces
+  real ticks over the full window and *is* ground truth. We therefore **retire the "<5%
+  Python-oracle match" sub-goal** (D1's gate is moot) — the Python oracle was only ever a
+  fast proxy, and its idealized numbers are now superseded. The §3.6 king re-search runs
+  candidates **through the tester** (`out/ck_batch.ps1`, read via `backtest/tester_truth.py`).
+  Aligns with the core mandate: *tester = ground truth, reality over idealized backtest.*
+- **D5 — NBP is the standard accounting.** Each ops-account is funded with exactly **1R**
+  (EA-dumb model), so the broker's **negative-balance protection** caps any loss at **-1R**
+  (the tester, run on a big deposit, *reports* -1.1..-2.0R overshoot; the live account
+  zeroes it). **Every op's realized R is clamped `max(R, -1)`** in all downstream accounting
+  (totR/DD/RF/segments/growth). This clamp also makes Model 1 ≡ Model 4 (overshoot was their
+  only divergence). Implemented in `tester_truth.py` (canonical reader) and `ck_batch.ps1`
+  (reports `nbpR`).
+- **D1 — gap metric/bar: `totR`** *(superseded by D4 as a Python↔tester gate; totR remains
+  the headline metric, now read NBP-clamped off the tester).* Was: per-leg totR within 5%
+  vs the Model-4 tester; 6-segment fingerprint as robustness.
 - **D2 — re-research scope: STAY in the current family** — V-pattern breakout, gold + BTC.
   The edge is the **trade management**, not the signal → optimize management/weights/combos,
   not the trigger. (No new signals/instruments.)
@@ -148,6 +163,22 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
 - **Residual now = §3.2 + §3.3 work:** (a) entry-set drift (gold H5: reconstructed H1
   volume → chart gold on H1) and (b) bar-granularity path sensitivity on big stacks
   (→ M1-intrabar Python / Model-4 tester). This is the same ~21% even faithful BtcGF loses.
+- **§3.2 DONE (commit 8757179):** `InpMgmtTF` added, all legs chart on H1. Model-1 re-run:
+  gold ~unchanged (120.9/152.2), BTC identical → zero regression. Proved **H5 is not the
+  gap** (under Model 1 the tester builds H1 from M1 regardless of chart TF); the residual is
+  bar-granularity / fill-path.
+- **§3.4 DONE → PATH A (commit 9afc99b + the NBP work):** **Model 4 ≈ Model 1** (BtcGF
+  188.3 vs 189.9; GoldS210 147.4 vs 152.2), and **identical under NBP** (BtcGF 190/191,
+  GoldS210 157.4/157.5). So the **NBP-clamped Model-1 tester is the trustworthy full-window
+  engine** (D4/D5). `tester_truth.py` is the canonical reader. The Python oracle is retired
+  as the research engine; **§3.3 (M1-intrabar Python) is dropped** (also blocked: exported
+  M1 only covers ~2–3 months). The *real* king legs on the trustworthy engine are **weaker
+  & less robust** than the oracle claimed (e.g. GoldS210 nbpR 157 vs oracle 259, segs 3/6,
+  1op 57%) — confirming the kings need re-challenging (§3.6).
+- **NEXT = §3.6 king re-search on the tester-truth engine:** sweep the trade-management
+  layer (stacking geometry, margin-floor, TP/trail, gate, concurrency, weights, blend) via
+  `ck_batch.ps1`, scored NBP-clamped through `tester_truth.py`, enforcing real 6-seg
+  robustness → the *true* kings → resume deployment (§3.7).
 - Phase A (EA + oracle + presets) and Phase B (validation run) are **done & committed**
   (`1b7efda`, `7b769fa`, `5d75115`). The management/sizing core is now faithful on matched
   ops; the gap is entry-set + granularity, not the port logic.

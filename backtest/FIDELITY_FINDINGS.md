@@ -154,3 +154,31 @@ overshoot + path). To get research onto a trustworthy footing:
 - **C — calibrated correction:** build/validate the M1-intrabar engine on the ~2–3 mo
   where M1 exists, derive a principled loss-overshoot + path correction, apply to the
   full-window bar oracle. Pragmatic; some fudge risk (the plan warns against fudge).
+
+## DECISION — Path A + NBP (2026-06-14, user)
+**Chose A (tester-as-truth).** And a key correction from the user on "loss overshoot":
+it is **not** real — in live high-leverage trading a liquidation briefly shows e.g.
+−1.3R, but the broker's **negative-balance protection** instantly zeroes the account,
+so the realized loss is **capped at −1R** (the account *is* 1R in the EA-dumb model).
+The tester only shows −2R because it runs on a big deposit (NBP never triggers).
+
+→ **Standard accounting (D5): clamp every op `max(R, −1)`.** Applied, this:
+- makes **Model 1 ≡ Model 4** (BtcGF 191.0/190.2, GoldS210 157.4/157.5 — the overshoot
+  was their *only* divergence), so the fast Model-1 tester is the definitive engine;
+- is the **live** number (totR/DD/RF/segments/growth all use clamped R).
+
+The NBP-clamped tester fingerprints (the *real* king legs — note they're weaker & less
+robust than the oracle, which is the whole reason to re-search):
+
+| leg | nbpR | win% | maxDD | RF | segs | 1op | vs oracle |
+|---|---|---|---|---|---|---|---|
+| BtcGF      | 191.0 | 23.4 | 18.8 | 10.2 | 5/6 | 50% | 0.79 |
+| BtcPG      |  40.6 | 28.6 | 25.9 |  1.6 | 4/6 |  8% | 0.49 |
+| BtcShield  |  16.5 | 46.4 | 20.3 |  0.8 | 3/6 |  8% | 0.36 |
+| GoldGeo17  | 124.3 | 27.7 | 19.9 |  6.3 | 5/6 | 33% | 0.71 |
+| GoldS210   | 157.4 | 20.6 | 33.4 |  4.7 | 3/6 | 57% | 0.61 |
+| GoldShield |  37.7 | 37.6 | 16.0 |  2.4 | 4/6 |  5% | 0.46 |
+
+**Tooling now standard:** `tester_truth.py` (canonical NBP reader/fingerprint),
+`ck_batch.ps1 -Model 1` (the research engine; reports `nbpR`). **Next: §3.6 king
+re-search on this engine.**
