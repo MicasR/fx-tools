@@ -217,3 +217,26 @@ our export just capped at ~2–3 months.
 
 **NBP (D5) stands regardless** — it's the correct live accounting and what Python must be
 compared against.
+
+## DATA PARITY — the rule for the M1 route (user, 2026-06-14)
+Any Python-vs-tester comparison is only valid if **both consume identical input series**;
+otherwise we'd be measuring data mismatch, not engine fidelity. In the tester's **Model 1**
+*everything* is built from **M1**: the H1 bars (incl. their `tick_volume`, which drives the
+V-pattern ENTRY), the M15 management bars, and the simulated intrabar path. Therefore:
+- **Dump M1 as the single source of truth** (`DumpHistory.mq5` mode=BARS, TF=M1) and in
+  Python **derive H1 & M15 from that M1 by aggregation** — H1 `tick_volume` = **sum of the
+  M1 tick_volumes**. **Do NOT** keep reading a separately-pulled `XAUUSDc_H1.csv`: its
+  `tick_volume` can differ from the M1-sum the tester uses → different V-pattern triggers →
+  different entry set. *This is a prime suspect for the current entry-set gap* (the gap is
+  ~entirely the entry set, and even native-H1 BTC's entries differ) — verify by aggregating
+  dumped M1→H1 and diffing `tick_volume` vs the old H1 CSV.
+- **Intrabar exit/entry stepped at M1** (each M1 bar's H/L vs SL/TP). Within one minute both
+  SL and TP are ~never hit together, so MT5's exact M1→tick ordering rarely matters; M1-bar
+  resolution captures essentially all the intrabar path that drives the entry-set gap.
+- **Fallback — ticks (`DumpHistory.mq5` mode=TICKS)** for exact **Model-4** parity if M1
+  proves insufficient. From ticks, H1 `tick_volume` = real tick count/hour (= Model 4).
+  Bigger/slower; only if needed.
+
+So the build order next session: dump M1 → **derive H1/M15 from it** → confirm M1 spans the
+full window AND M1→H1 `tick_volume` reconciles → build the M1-intrabar engine on this shared
+data → compare to tester **Model 1** (same M1 source) under NBP. Same data in, same ops out.

@@ -183,17 +183,24 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
   & less robust** than the oracle claimed (e.g. GoldS210 nbpR 157 vs oracle 259, segs 3/6,
   1op 57%) — confirming the kings need re-challenging (§3.6).
 - **▶ RESUME HERE (next session, 2026-06-14 — paused on credits):**
-  1. **Probe M1 extractability** (user not present to launch the live terminal this
-     session). Compile `Scripts/DumpHistory.mq5` (junction it into the terminal's
-     `MQL5/Scripts` per [[reference_mt5_junction_setup]], or drop it beside the EA), set
-     `InpMaxBars`→Unlimited (Tools▸Options▸Charts), run it for **XAUUSDc M1** and
-     **BTCUSDc M1** over 2024-02 → 2026-06. Copy the output CSVs from `MQL5/Files/` into
-     `backtest/data/` (rename to `<SYM>USDc_M1.csv`). Confirm they now span the full window
-     (currently only ~2–3 months — XAU M1 Mar–Jun'26, BTC M1 Apr–Jun'26).
-  2. **If full M1 obtained → build the M1-intrabar Python engine** (management cadence on
-     M15/H1, exit-check + entry-fill stepped at M1). Prototype/validate on the recent ~2–3
-     mo of M1 first (where it already exists) against the tester, then run full-window.
-     Goal: Python ≈ NBP-tester (`tester_truth.py`) per-leg → the fast trustworthy engine.
+  0. **DATA PARITY is the rule** (user): Python and the tester must consume identical
+     inputs. The tester's Model 1 builds *everything* from M1 → so dump **M1** and **derive
+     H1 & M15 from it** (H1 `tick_volume` = SUM of M1 tick_vols); do NOT read the old
+     separately-pulled H1 CSV (its tick_volume likely differs → a prime suspect for the
+     entry-set gap). Compare Python to tester **Model 1** (same M1 source). See FINDINGS
+     "DATA PARITY".
+  1. **Extract M1** (user must launch the live terminal). `Scripts/DumpHistory.mq5`
+     (compiles 0/0; modes **BARS**/**TICKS**) — junction into `MQL5/Scripts` per
+     [[reference_mt5_junction_setup]] or drop beside the EA; set Max-bars-in-chart→Unlimited;
+     run **mode=BARS, TF=M1** for XAUUSDc + BTCUSDc over 2024-02→2026-06. Copy
+     `MQL5/Files/*_M1_dump.csv` → `backtest/data/<SYM>USDc_M1.csv`. Confirm full-window
+     coverage (today only ~2–3 mo) AND that M1→H1 `tick_volume` reconciles. **Fallback:**
+     **mode=TICKS** (CopyTicksRange, day-chunked) for exact Model-4 parity if M1 falls short.
+  2. **If full M1 obtained → build the M1-intrabar Python engine**: derive H1 (entry, incl.
+     tick_volume=ΣM1) and M15 (management) from the dumped M1; management cadence on M15/H1,
+     but **exit-check + entry-fill stepped at M1**. Prototype on the recent ~2–3 mo of M1
+     first (where it already exists), confirm it reproduces tester Model 1 there, then run
+     full-window. Goal: Python ≈ NBP-tester (`tester_truth.py`) per-leg → the fast engine.
   3. **If M1 can't be extracted → Path A fallback:** §3.6 king re-search **through the
      tester** (`ck_batch.ps1`, NBP-scored via `tester_truth.py`).
   4. **Then §3.6** (either engine): re-search the trade-management layer (stacking geometry,
