@@ -77,11 +77,16 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
   of each op's R-gap is spread vs commission vs swap vs slippage vs a different entry.
 - Output: a per-leg attribution of the gap → tells us which of H1–H5 dominate.
 
-### 3.2 Architectural fix — decouple management TF from chart TF
-- Add `InpMgmtTF` (default = chart `_Period`). The EA already separates **entry TF**
-  (H1) from chart; do the same for **management**. Then chart **gold on H1** (native
-  H1 entry volume, no reconstruction = kills H5) while managing on **M15** via
-  `InpMgmtTF`. Instrument-agnostic. Re-validate gold legs after.
+### 3.2 Architectural fix — chart on H1, manage on M15 (DECIDED: change the EA)
+- **Always chart the EA on H1** so entry detection is **native to the chart** (`_Period`
+  = H1 = the broker's real H1 bars live; real-tick-derived in the tester) — matching live
+  exactly, no cross-TF volume reconstruction. Add **`InpMgmtTF`** (the management/add
+  timeframe: **M15** for gold, **H1** for BTC) and run management (SMA bounce, adds,
+  margin-line, trail) off `InpMgmtTF` instead of `_Period`. Requires the M1-granular
+  tester (Model 1/4) so M15 is available under an H1 chart. Instrument-agnostic.
+- User's call (accuracy first): *"just release an EA on the H1 chart and add positions on
+  M15."* This + a **Model-4 (real-tick)** validation makes the tester a faithful referee
+  for gold (live `CopyTickVolume(H1)` reads real H1 bars). Re-validate all legs after.
 
 ### 3.3 Realistic friction model in Python (agnostic)
 - Extend `pyramid_engine`/`conc_engine` accounting (`close`, the add path) with a
@@ -103,9 +108,14 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
 ### 3.6 Re-challenge the kings (only after the gate passes)
 - Re-run the king search on the **corrected** engine: re-pick legs, sets, weights,
   expert combinations, gold:BTC split — the old choices were made on the untrustworthy
-  engine. Enforce **6-segment robustness** throughout. Possibly reconsider the strategy/
-  instrument universe (see open decisions). Produce the *true* kings + a fresh
-  `cross_kings`-style portfolio result.
+  engine, and the user suspects they're **not optimal**. Enforce **6-segment robustness**
+  throughout. Produce the *true* kings + a fresh `cross_kings`-style portfolio result.
+- **Scope (DECIDED): stay within the current family — V-pattern breakout, gold + BTC.**
+  Do **not** hunt for new signals: *"our edge is in HOW we trade the signal, not the
+  signal itself — these triggers are basic, maybe no better than an MA cross."* So the
+  search space is the **trade-management** layer: stacking geometry (proggeo/geofloor,
+  mult/step), the margin-line floor, TP vs trail, the favourable gate, concurrency, the
+  leg weights, and the cross-instrument blend — NOT the entry.
 
 ### 3.7 Return to deployment
 - Regenerate `shadow_streams` from the corrected engine; re-validate the EA; resume
@@ -113,16 +123,15 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
 
 ---
 
-## 4. Open decisions (confirm at the start of the new session)
-- **D1 — gap metric/bar:** target = per-leg totR within 5% vs **Model 4** tester, AND
-  6-segment fingerprint match? (assumed yes.)
-- **D2 — re-research scope:** when re-challenging the kings, stay within the current
-  family (V-pattern breakout, gold + BTC) and re-optimize sets/weights/combos — or
-  also re-open the **strategy and instrument universe**? (user hinted "strategies" and
-  "experts" plural.)
-- **D3 — engine resolution:** if bar-level Python can't hit <5% because intrabar SL/TP
-  ordering matters, do we move the Python engine to **M1-driven** intrabar (we have M1
-  data) to mirror the tester? (assumed: escalate only if needed.)
+## 4. Resolved decisions (2026-06-14)
+- **D1 — gap metric/bar: `totR`** is the headline. Gate = per-leg totR within **5%** vs
+  the **Model-4 (real-tick)** tester; keep the 6-segment fingerprint as a robustness check.
+- **D2 — re-research scope: STAY in the current family** — V-pattern breakout, gold + BTC.
+  The edge is the **trade management**, not the signal → optimize management/weights/combos,
+  not the trigger. (No new signals/instruments.)
+- **D3 — chart/management TF: change the EA → chart on H1, manage on M15** (`InpMgmtTF`),
+  validate under Model 4. Accuracy over convenience (user's explicit preference). The
+  Python engine goes **M1-driven intrabar** if bar-level can't hit <5% (we have M1 data).
 
 ---
 
