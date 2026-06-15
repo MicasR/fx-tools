@@ -182,7 +182,19 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
   M1 only covers ~2–3 months). The *real* king legs on the trustworthy engine are **weaker
   & less robust** than the oracle claimed (e.g. GoldS210 nbpR 157 vs oracle 259, segs 3/6,
   1op 57%) — confirming the kings need re-challenging (§3.6).
-- **M1 ROUTE DONE — falls short of <5%; FORK pending (2026-06-14).** Full-window M1 extracted
+- **✅ §3.6 KING RE-SEARCH DONE → PROM-DATE KING CROWNED (2026-06-15).** Path A (tester-as-truth)
+  via the MT5 optimizer: EA `OnTester` (NBP robustness score) + frames ship each pass's weekly
+  perf vector → "prom date" greedy team-build (`backtest/promdate.py`) on a 1075-candidate pool.
+  Findings: only ~2-3 genuinely independent edges exist (BTC trail, gold shield, BTC proggeo) →
+  the old 6-account shield-sword was FALSE diversification; 1-op filter essential (kills
+  pin-jackpots); weights are a fine-tune (equal weight = standard, anti-curve-fit). **CROWNED =
+  3-dancer (BtcGF-trail + GoldShield-TP + BtcPG, equal): $1000→$57,459 @24%DD, PF 1.49, RF 25.1,
+  6/6 — ~3× the old cross-king's REAL number (19.2×; oracle's 128.8× was inflated ~6.7×).** Presets
+  `ExpertAdvisors/CrossKing_EA/presets/PD_*.set`. **OPEN: gold-compound absent (user sad — it's the
+  beloved geo-stack); a gold-inclusive team = 30× (still > old king), −48% vs BTC-led; revisit.**
+  Detail in [[project-promdate-kings]] + `backtest/FIDELITY_FINDINGS.md`. **▶ NEXT = §3.7 deploy
+  (OPTION B: orchestrator straight away, `SYSTEM_PLAN.md`).** Fidelity arc COMPLETE.
+- **M1 ROUTE (superseded by Path A) — fell short of <5%; (2026-06-14).** Full-window M1 extracted
   (`DumpHistory.mq5`: XAU 781k bars 2024-03→2026-06, BTC 1.24M bars 2024-02→2026-06 — the 90k cap
   is busted). **DATA PARITY confirmed** (M1→H1 tick_volume 100% identical; entry sets identical on
   overlap → the old-H1 tick_volume suspect is **falsified**). Built the M1-intrabar engine
