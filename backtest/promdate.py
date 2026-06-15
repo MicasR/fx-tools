@@ -38,8 +38,20 @@ def arch_tag(row):
     return f"{trig}/{lp}/b{row.get('buffer', 0.0):.2f}"
 
 
+def _leg_retain_ex3wk(df):
+    """Fraction of a leg's total weekly R retained after dropping its 3 BIGGEST WEEKS.
+    The thesis's 'often enough' made concrete on the weeks/growth dimension that drives
+    the float-DD growth mirage: a +881R-in-one-week leg retains ~10% (one event); a genuine
+    recurring edge retains most. Computed from the weekly vectors already in the pool."""
+    Wm = df[WCOLS].to_numpy(dtype=float)
+    tot = Wm.sum(axis=1)
+    top3 = np.sort(Wm, axis=1)[:, -3:].sum(axis=1)
+    return np.where(tot > 0, (tot - top3) / tot, -1.0)
+
+
 def load_pool(patterns=("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc_*.csv"),
-              min_ops=30, min_nbpR=5.0, min_segpos=4, min_segpos_ex3=4, require_both_halves=True):
+              min_ops=30, min_nbpR=5.0, min_segpos=4, min_segpos_ex3=4,
+              require_both_halves=True, min_leg_retain=0.35):
     """Union of the incumbent pool + the §3.6-REDUX archetype sweeps, filtered to the
     CHAMPIONSHIP QUALIFICATION (user, 2026-06-15 — Option B: aggression is ADMITTED, no
     oneop cap; the most aggressive techniques must compete):
@@ -48,9 +60,11 @@ def load_pool(patterns=("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc
       R2  segpos_ex3 >= 4                          (low single-trade dependency: still >=4/6
                                                     positive after removing the 3 biggest wins)
       R3  h1R > 0 AND h2R > 0                       (anti-recency: positive in BOTH window halves)
-    The capped -1R downside makes high-compound aggression a bounded-cost asymmetric bet; R2
-    replaces the blunt oneop cut as the principled single-trade-dependency guard. Legacy CSVs
-    lacking a metric skip that rule (NaN -> pass) — re-sweep on the current EA populates all."""
+      R4  weekly retain (ex top-3 weeks) >= min_leg_retain  (the thesis's 'often enough':
+          the edge can't live in a few weeks -> the dimension that drives the growth mirage)
+    The capped -1R downside makes high-compound aggression a bounded-cost asymmetric bet; R2+R4
+    replace the blunt oneop cut as principled concentration guards (R2 on ops/segments, R4 on
+    weeks/growth). Legacy CSVs lacking a metric skip that rule (NaN -> pass)."""
     files = [f for p in patterns for f in glob.glob(p)]
     if not files:
         raise FileNotFoundError(patterns)
@@ -63,6 +77,7 @@ def load_pool(patterns=("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc
                                    ((df["h1R"] > 0) & (df["h2R"] > 0)))
     df = df[(df["ops"] >= min_ops) & (df["nbpR"] >= min_nbpR) &
             (df["segpos"] >= min_segpos) & r2 & r3].copy()
+    df = df[_leg_retain_ex3wk(df) >= min_leg_retain].reset_index(drop=True)   # R4
     # drop exact duplicate strategies (same leg + full param signature) keeping best score
     keyc = ["leg", "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half",
             "addtrig", "lineplace", "nback", "buffer"]

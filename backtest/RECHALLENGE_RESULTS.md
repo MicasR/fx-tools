@@ -115,3 +115,16 @@ shield) + BTC trail + 2 NEW archetypes (BTC nback15/buf0.5, BTC pinprev). Cost: 
 **Caveat:** neither is bulletproof — both bootstrap to ~10× median; both still lean on the back half.
 Forward expectations « headline raw. ▶ NEXT: finalist single-pass reproduce + decide crown (robust team)
 vs further densify the archetype low-TP corners; mind the back-loading for live sizing.
+
+## Phase 4b — DENSIFIED + R4, CONVERGED CROWN
+After densifying archetype corners, the drop_top=3 objective was GAMED (GoldS210 1op87% snuck back,
+ex-top5 retain 3%). Added **R4 (weekly concentration): retain ≥35% of R after dropping the 3 biggest
+WEEKS** — the thesis's "occur often enough" on the weeks/growth dimension. Pool 769→109 survivors;
+jackpot gone. **CROWNED challenger (max_corr=1.0, 6 legs, all corr_to_rest ≤0.44) = 31.5× raw /
+13.5× robust / retain 27% / boot-median 12.3× / p05 2.7× / 5-6 segs.** Roster: 2 GOLD geofloor
+compounders (sma7/step1.7/TP3, sma9/slow300/step1.4/TP3) + 2 BTC trails (sma15/slow270/step1.5/tr2.5,
+sma15/step1.2/tr2.5) + BTC nback15/buf0.5/step2.0/TP1.0 + BTC pinprev/buf0.4/sma13/TP1.5.
+**vs champion (same engine): 44× raw but robust 4.8× / retain 6% / boot-med 10.1 / p05 1.8.**
+→ challenger wins the user's metric (chance of high returns) on every robustness measure.
+CAVEAT: boot-median ~12×, back-loaded → modest, regime-dependent forward edge.
+▶ pending user confirm: crown challenger → PD2_*.set presets + finalist single-pass reproduce.
