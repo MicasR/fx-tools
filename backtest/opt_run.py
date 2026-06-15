@@ -60,11 +60,14 @@ KNOB_ORDER = ["sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"
 
 
 def _val(name, base, opt):
-    """Render one [TesterInputs] line; optimized knobs get value||start||step||stop||Y."""
+    """Render one [TesterInputs] line; optimized knobs get value||start||step||stop||Y.
+    FIXED knobs MUST be emitted with an explicit ||...||N (optimize OFF): MT5 retains a
+    prior sweep's optimize-flag for an input, so a plain `Inp=value` does NOT disable it
+    (caused gold_pinprev to spuriously sweep `step` -> 900 rows for a 300-combo grid)."""
     if name in opt:
         lo, st, hi = opt[name]
         return f"{KNOB[name]}={lo}||{lo}||{st}||{hi}||Y"
-    return f"{KNOB[name]}={base}"
+    return f"{KNOB[name]}={base}||{base}||0||{base}||N"
 
 
 def run_opt(tag, leg, opt=None, fixed=None, mode=1, timeout=3600):
