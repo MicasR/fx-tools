@@ -21,16 +21,17 @@ class Leg:
     weight: float      # KING capital-allocation weight (renormalized to sum 1 at load)
 
 
-# KING roster + weights (PD3_KING_manifest.md). Weights renormalized in CONFIG below.
+# KING roster + weights (PD3_KING_manifest.md). account id == the EA's InpLegName (the EA
+# only knows that; telemetry/control key on it). Weights renormalized in CONFIG below.
 _RAW_LEGS = [
-    Leg("btc-trail-1", "PD3_BtcTrail_1", "BTCUSDc", 0.338),
-    Leg("gold-geo-0",  "PD3_GoldGeo_0",  "XAUUSDc", 0.241),
-    Leg("btc-trail-4", "PD3_BtcTrail_4", "BTCUSDc", 0.161),
-    Leg("btc-nb-2",    "PD3_BtcNb_2",    "BTCUSDc", 0.105),
-    Leg("btc-pin-5",   "PD3_BtcPin_5",   "BTCUSDc", 0.084),
-    Leg("gold-geo-3",  "PD3_GoldGeo_3",  "XAUUSDc", 0.070),
+    Leg("PD3_BtcTrail_1", "PD3_BtcTrail_1", "BTCUSDc", 0.338),
+    Leg("PD3_GoldGeo_0",  "PD3_GoldGeo_0",  "XAUUSDc", 0.241),
+    Leg("PD3_BtcTrail_4", "PD3_BtcTrail_4", "BTCUSDc", 0.161),
+    Leg("PD3_BtcNb_2",    "PD3_BtcNb_2",    "BTCUSDc", 0.105),
+    Leg("PD3_BtcPin_5",   "PD3_BtcPin_5",   "BTCUSDc", 0.084),
+    Leg("PD3_GoldGeo_3",  "PD3_GoldGeo_3",  "XAUUSDc", 0.070),
 ]
-MAIN = "main"
+MAIN = "Main"          # the Main reporter EA's InpLegName
 
 
 class Config:

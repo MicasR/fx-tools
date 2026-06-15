@@ -145,6 +145,7 @@ double   g_pH = 0, g_pL = 0, g_pR = 0;   // armed trigger high/low/range
 datetime g_last_h1   = 0;      // last processed entry-TF (H1) bar
 datetime g_last_mgmt = 0;      // last processed chart-TF management bar
 datetime g_last_hb   = 0;      // last heartbeat send
+bool     g_halt      = false;  // orchestrator "no new ops" flag (polled; fail-open)
 
 //--- cached specs
 double   g_TR  = 0.0;          // $ P&L per 1.0 price move per 1.0 lot
@@ -642,6 +643,11 @@ void ComputeStops(const double &entries[], const double &lots[], double &stop, d
 void EntryCadence()
 {
    if(g_inop) return;                          // max_conc = 1: no new op while open
+   if(g_halt)                                  // orchestrator "no new ops" (breaker/kill): never flatten, just don't arm
+   {
+      if(CountPendings() > 0) DeletePendings(0);
+      return;
+   }
    // stale-cancel a pending pair older than InpBreakBars H1 bars (gap-immune)
    if(CountPendings() > 0)
    {
@@ -965,14 +971,46 @@ bool TelemetryEnabled()
    return (InpTelemetryURL != "" && !(bool)MQLInfoInteger(MQL_TESTER));
 }
 
-void PushJson(string body)
+// POST `body` to InpTelemetryURL + path (base URL = the orchestrator, no trailing slash).
+void PushJson(string path, string body)
 {
    if(!TelemetryEnabled()) return;
    char post[], result[]; string headers = "Content-Type: application/json\r\n", rhdr;
    StringToCharArray(body, post, 0, StringLen(body), CP_UTF8);
    int sz = ArraySize(post); if(sz > 0) ArrayResize(post, sz - 1);   // drop trailing NUL
-   int code = WebRequest("POST", InpTelemetryURL, headers, 5000, post, result, rhdr);
-   if(code == -1) PrintFormat("[CrossKing:%s] WebRequest failed err=%d (whitelist the URL)", InpLegName, GetLastError());
+   int code = WebRequest("POST", InpTelemetryURL + path, headers, 5000, post, result, rhdr);
+   if(code == -1) PrintFormat("[CrossKing:%s] WebRequest %s failed err=%d (whitelist the URL)",
+                              InpLegName, path, GetLastError());
+}
+
+// Current account + op state -> POST /telemetry (matches orchestrator Telemetry contract).
+void SendState()
+{
+   if(!TelemetryEnabled()) return;
+   double e_arr[], l_arr[]; int n = ScanBook(e_arr, l_arr);
+   double ml = (n > 0) ? MarginLine(e_arr, l_arr, g_dir, g_E0) : 0.0;
+   double openR = 0.0;
+   if(g_inop && g_r0 > 0)
+   {
+      double px = (g_dir == 1) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      openR = g_dir * (px - g_e0) / g_r0;
+   }
+   string body = StringFormat("{\"account\":\"%s\",\"symbol\":\"%s\",\"balance\":%.2f,\"equity\":%.2f,"
+                 "\"is_open\":%s,\"dir\":%d,\"stack\":%d,\"open_r\":%.3f,\"ml_sl\":%.5f,\"ver\":\"%s\"}",
+                 InpLegName, _Symbol, AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY),
+                 (g_inop ? "true" : "false"), g_dir, n, openR, ml, "1.0");
+   PushJson("/telemetry", body);
+}
+
+// Poll the orchestrator "no new ops" flag. FAIL-OPEN: on any error g_halt is left unchanged
+// (trade execution never depends on the orchestrator being reachable).
+void PollControl()
+{
+   if(!TelemetryEnabled()) return;
+   char data[], result[]; string rhdr;
+   int code = WebRequest("GET", InpTelemetryURL + "/control/" + InpLegName, "", 5000, data, result, rhdr);
+   if(code == 200)
+      g_halt = (StringFind(CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8), "\"halt\":true") >= 0);
 }
 
 void Heartbeat(int cnt)
@@ -981,36 +1019,23 @@ void Heartbeat(int cnt)
    datetime now = TimeCurrent();
    if(now - g_last_hb < InpHeartbeatSec) return;
    g_last_hb = now;
-   string body = StringFormat("{\"type\":\"heartbeat\",\"leg\":\"%s\",\"symbol\":\"%s\",\"ver\":\"%s\","
-                              "\"ts\":%d,\"balance\":%.2f,\"equity\":%.2f,\"open\":%s,\"depth\":%d}",
-                              InpLegName, _Symbol, "1.00", (long)now,
-                              AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY),
-                              (g_inop ? "true" : "false"), cnt);
-   PushJson(body);
+   SendState();
+   PollControl();
 }
 
-void TelemetryOp(string ev)
+void TelemetryOp(string ev)            // op open / add -> immediate state refresh
 {
-   if(!TelemetryEnabled()) return;
-   double e_arr[], l_arr[]; ScanBook(e_arr, l_arr);
-   double ml = MarginLine(e_arr, l_arr, g_dir, g_E0);
-   string body = StringFormat("{\"type\":\"op\",\"event\":\"%s\",\"leg\":\"%s\",\"symbol\":\"%s\","
-                              "\"dir\":%d,\"e0\":%.5f,\"R\":%.5f,\"E0\":%.2f,\"depth\":%d,"
-                              "\"lots\":%.2f,\"ml\":%.5f,\"equity\":%.2f}",
-                              ev, InpLegName, _Symbol, g_dir, g_e0, g_r0, g_E0,
-                              ArraySize(l_arr), SumLots(l_arr), ml, AccountInfoDouble(ACCOUNT_EQUITY));
-   PushJson(body);
+   SendState();
 }
 
-void TelemetryOpClose(double realizedR)
+void TelemetryOpClose(double realizedR)   // closed op -> POST /op_close (the live R-stream)
 {
    if(!TelemetryEnabled()) return;
-   string body = StringFormat("{\"type\":\"op\",\"event\":\"close\",\"leg\":\"%s\",\"symbol\":\"%s\","
-                              "\"dir\":%d,\"R\":%.4f,\"E0\":%.2f,\"open_ts\":%d,\"close_ts\":%d,"
-                              "\"balance\":%.2f}",
-                              InpLegName, _Symbol, g_dir, realizedR, g_E0,
-                              (long)g_op_open_time, (long)TimeCurrent(),
-                              AccountInfoDouble(ACCOUNT_BALANCE));
-   PushJson(body);
+   string body = StringFormat("{\"account\":\"%s\",\"symbol\":\"%s\",\"realized_r\":%.4f,"
+                 "\"positions\":%d,\"reason\":\"%s\",\"open_time\":%d,\"close_time\":%d}",
+                 InpLegName, _Symbol, realizedR, g_add_count + 1, "close",
+                 (long)g_op_open_time, (long)TimeCurrent());
+   PushJson("/op_close", body);
+   SendState();                         // refresh balance / flat state post-close
 }
 //+------------------------------------------------------------------+

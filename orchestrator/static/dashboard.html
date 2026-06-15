@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CrossKing Control Center</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root{--bg:#0e1116;--card:#171c24;--ln:#262d38;--fg:#d7dde6;--mut:#8a94a3;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--blue:#58a6ff}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,Segoe UI,sans-serif}
+  header{display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid var(--ln);background:var(--card)}
+  h1{font-size:16px;margin:0;letter-spacing:.5px} .kpi{font-size:12px;color:var(--mut)} .kpi b{display:block;font-size:20px;color:var(--fg)}
+  .halt{margin-left:auto;padding:6px 14px;border-radius:6px;font-weight:700}
+  .halt.on{background:rgba(248,81,73,.15);color:var(--bad);border:1px solid var(--bad)} .halt.off{background:rgba(63,185,80,.12);color:var(--ok);border:1px solid var(--ok)}
+  main{padding:18px 20px;display:grid;gap:18px;grid-template-columns:1fr 1fr}
+  .full{grid-column:1/-1} .card{background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:14px}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);margin:0 0 12px}
+  .grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+  .acct{background:var(--bg);border:1px solid var(--ln);border-radius:8px;padding:10px}
+  .acct .top{display:flex;justify-content:space-between;align-items:center} .acct .nm{font-weight:600}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px} .dot.ok{background:var(--ok)} .dot.stale{background:var(--bad)}
+  .badge{font-size:11px;padding:2px 7px;border-radius:10px} .badge.open{background:rgba(88,166,255,.15);color:var(--blue)} .badge.flat{background:#222a33;color:var(--mut)}
+  .bar{height:7px;background:var(--bg);border:1px solid var(--ln);border-radius:4px;overflow:hidden;margin-top:8px} .bar>div{height:100%;background:var(--blue)}
+  .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:6px} .row b{color:var(--fg)}
+  table{width:100%;border-collapse:collapse;font-size:12px} td,th{text-align:left;padding:5px 8px;border-bottom:1px solid var(--ln)} th{color:var(--mut);font-weight:600}
+  .ddwrap{position:relative;height:8px;background:var(--bg);border:1px solid var(--ln);border-radius:4px;margin-top:6px}
+  .ddwrap>div{position:absolute;left:0;top:0;bottom:0;background:var(--warn);border-radius:4px} .ddwrap>span{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--bad)}
+  .mut{color:var(--mut)} .pos{color:var(--ok)} .neg{color:var(--bad)}
+</style></head>
+<body>
+<header>
+  <h1>👑 CROSSKING CONTROL</h1>
+  <div class="kpi">Total equity T<b id="T">—</b></div>
+  <div class="kpi">Peak T<b id="peak">—</b></div>
+  <div class="kpi">Drawdown<b id="dd">—</b><div class="ddwrap"><div id="ddbar"></div><span id="ddline"></span></div></div>
+  <div class="kpi">Risk budget f<b id="ftot">—</b></div>
+  <div id="halt" class="halt off">RUNNING</div>
+</header>
+<main>
+  <section class="card full"><h2>Accounts — balance vs target</h2><div id="accts" class="grid"></div></section>
+  <section class="card"><h2>Pending transfers (Telegram → user)</h2><table id="xfer"><thead><tr><th>from</th><th>to</th><th>amount</th><th>why</th></tr></thead><tbody></tbody></table></section>
+  <section class="card"><h2>Live R-stream (cumulative, per leg + combined)</h2><canvas id="rchart" height="150"></canvas></section>
+</main>
+<script>
+const $=id=>document.getElementById(id); let chart;
+const money=v=>'$'+(v??0).toLocaleString(undefined,{maximumFractionDigits:0});
+async function tick(){
+  let s; try{s=await (await fetch('/status')).json()}catch(e){return}
+  $('T').textContent=money(s.T); $('peak').textContent=money(s.peak_T);
+  $('dd').textContent=(s.drawdown*100).toFixed(1)+'%'; $('ftot').textContent=(s.f_total*100).toFixed(1)+'%';
+  $('ddbar').style.width=Math.min(100,s.drawdown/s.breaker_dd*100)+'%';
+  $('ddline').style.left='100%';
+  const h=$('halt'); h.textContent=s.halted?'HALTED — no new ops':'RUNNING'; h.className='halt '+(s.halted?'on':'off');
+  $('accts').innerHTML=s.accounts.map(a=>{
+    const tgt=a.target||0, pct=tgt>0?Math.min(100,a.balance/tgt*100):0;
+    const w=a.weight!=null?(a.weight*100).toFixed(1)+'%':'reserve';
+    return `<div class="acct"><div class="top"><span class="nm"><span class="dot ${a.stale?'stale':'ok'}"></span>${a.name}</span>
+      <span class="badge ${a.is_open?'open':'flat'}">${a.is_open?'OPEN':'flat'}</span></div>
+      <div class="row"><span>weight ${w}</span><b>${money(a.balance)}</b></div>
+      <div class="bar"><div style="width:${pct}%"></div></div>
+      <div class="row"><span>target</span><b>${money(tgt)}</b></div></div>`}).join('');
+  $('xfer').querySelector('tbody').innerHTML=(s.pending_transfers||[]).map(t=>
+    `<tr><td>${t.src}</td><td>${t.dst}</td><td>${money(t.amount)}</td><td>${t.reason}</td></tr>`).join('')
+    || '<tr><td colspan=4 class="mut">none</td></tr>';
+  drawR(s.rstream||[]);
+}
+function drawR(rs){
+  const legs={}, order=[]; let comb=0; const cl=[];
+  rs.forEach((o,i)=>{ if(!(o.account in legs)){legs[o.account]=[];order.push(o.account)}
+    comb+=o.realized_r; cl.push(comb); });
+  // per-leg cumulative aligned to op index
+  const series=order.map(a=>{let c=0;return rs.map(o=>{if(o.account===a)c+=o.realized_r;return c})});
+  const labels=rs.map((_,i)=>i+1);
+  const ds=order.map((a,i)=>({label:a,data:series[i],borderWidth:1.3,pointRadius:0,tension:.15}));
+  ds.push({label:'COMBINED',data:cl,borderColor:'#fff',borderWidth:2.4,pointRadius:0,tension:.15});
+  if(chart)chart.destroy();
+  chart=new Chart($('rchart'),{type:'line',data:{labels,datasets:ds},
+    options:{responsive:true,plugins:{legend:{labels:{color:'#8a94a3',boxWidth:10,font:{size:10}}}},
+      scales:{x:{ticks:{color:'#8a94a3'},grid:{color:'#262d38'}},y:{title:{display:true,text:'cumulative R',color:'#8a94a3'},ticks:{color:'#8a94a3'},grid:{color:'#262d38'}}}}});
+}
+tick(); setInterval(tick,3000);
+</script>
+</body></html>

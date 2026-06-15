@@ -27,29 +27,29 @@ a = at_target(1000.0)
 ops_sum = sum(a[l.account].balance for l in cfg.legs)
 chk("ops targets sum = F_total*T (0.10*1000=100)", abs(ops_sum - 100.0) < 0.5)
 chk("Main reserve = T*(1-F_total) (~900)", abs(a[MAIN].balance - 900.0) < 0.5)
-chk("biggest leg = btc-trail-1 (~33.8%*100=33.8)", abs(a["btc-trail-1"].balance - 33.8) < 0.5)
+chk("biggest leg = btc-trail-1 (~33.8%*100=33.8)", abs(a["PD3_BtcTrail_1"].balance - 33.8) < 0.5)
 chk("at target -> no transfers", len(plan_transfers(a, cfg)) == 0)
 
 print("== win -> sweep to Main ==")
 a = at_target(1000.0)
-a["gold-geo-0"].balance += 20.0; a["gold-geo-0"].equity += 20.0   # won, flat
+a["PD3_GoldGeo_0"].balance += 20.0; a["PD3_GoldGeo_0"].equity += 20.0   # won, flat
 tr = plan_transfers(a, cfg)
-sweep = [t for t in tr if t.src == "gold-geo-0" and t.dst == MAIN and t.reason == "sweep"]
+sweep = [t for t in tr if t.src == "PD3_GoldGeo_0" and t.dst == MAIN and t.reason == "sweep"]
 chk("won flat leg -> a sweep to Main", len(sweep) == 1 and sweep[0].amount > 0)
 
 print("== loss -> Main tops up ==")
 a = at_target(1000.0)
-a["btc-nb-2"].balance -= 5.0; a["btc-nb-2"].equity -= 5.0          # lost, flat
+a["PD3_BtcNb_2"].balance -= 5.0; a["PD3_BtcNb_2"].equity -= 5.0          # lost, flat
 tr = plan_transfers(a, cfg)
-topup = [t for t in tr if t.dst == "btc-nb-2" and t.src == MAIN and t.reason == "topup"]
+topup = [t for t in tr if t.dst == "PD3_BtcNb_2" and t.src == MAIN and t.reason == "topup"]
 chk("lost flat leg -> a top-up from Main", len(topup) == 1 and topup[0].amount > 0)
 
 print("== open-op LOCK ==")
 a = at_target(1000.0)
-a["btc-nb-2"].balance -= 5.0; a["btc-nb-2"].equity -= 5.0
-a["btc-nb-2"].is_open = True                                      # locked
+a["PD3_BtcNb_2"].balance -= 5.0; a["PD3_BtcNb_2"].equity -= 5.0
+a["PD3_BtcNb_2"].is_open = True                                      # locked
 tr = plan_transfers(a, cfg)
-chk("open leg is never touched", all(t.src != "btc-nb-2" and t.dst != "btc-nb-2" for t in tr))
+chk("open leg is never touched", all(t.src != "PD3_BtcNb_2" and t.dst != "PD3_BtcNb_2" for t in tr))
 
 print("== transfer lag safety (Main can't overdraw) ==")
 a = at_target(1000.0)

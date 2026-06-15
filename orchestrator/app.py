@@ -2,8 +2,10 @@
 EA control-flag + dashboard JSON. Trade execution NEVER depends on this being up.
 Run: uvicorn orchestrator.app:app --host 0.0.0.0 --port 8800
 """
+import os
 import time
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from .config import DEFAULT, MAIN
 from .capital import Account, targets, plan_transfers, total_equity, Breaker
@@ -18,6 +20,12 @@ for name, r in db.accounts().items():                 # warm-start from DB
         ACCT[name] = Account(name, r["balance"], r["equity"], bool(r["is_open"]), r["last_hb"])
 
 app = FastAPI(title="CrossKing Orchestrator")
+_STATIC = os.path.join(os.path.dirname(__file__), "static")
+
+
+@app.get("/")
+def dashboard():
+    return FileResponse(os.path.join(_STATIC, "dashboard.html"))
 
 
 class Telemetry(BaseModel):

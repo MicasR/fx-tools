@@ -150,16 +150,22 @@ exactly (logic-preserving; confirmed by re-running the 3 presets in Phase 2).
 
 ---
 
-## 4. Telemetry (`InpTelemetryURL`; auto-off in tester / when empty)
-POSTs JSON to the orchestrator (Phase C). Whitelist the URL in the terminal
-(Tools ▸ Options ▸ Expert Advisors ▸ Allow WebRequest). Events:
-- **heartbeat** (throttled `InpHeartbeatSec`): leg, symbol, ver, ts, balance,
-  equity, open?, depth.
-- **op** (`open` / `add`): dir, e0, R, E0, depth, total lots, margin_line, equity.
-- **op close**: realized R (from balance delta / E0), dir, E0, open/close ts, balance.
+## 4. Telemetry + control (`InpTelemetryURL` = orchestrator BASE url; auto-off in tester / when empty)
+Talks to the FastAPI orchestrator (`orchestrator/app.py`). `InpTelemetryURL` is the **base**
+(e.g. `http://127.0.0.1:8800`); the EA appends the path. **Whitelist the base URL** in each
+terminal (Tools ▸ Options ▸ Expert Advisors ▸ Allow WebRequest). `account` = `InpLegName`
+(must equal the orchestrator account id, i.e. the PD3 preset name).
+- **`SendState()` → POST `/telemetry`** (heartbeat-throttled by `InpHeartbeatSec`, and immediately
+  on op open/add/close): `{account, symbol, balance, equity, is_open, dir, stack, open_r, ml_sl, ver}`.
+- **`TelemetryOpClose()` → POST `/op_close`**: `{account, symbol, realized_r, positions, reason,
+  open_time, close_time}` — the live R-stream the dashboard overlays on the backtest.
+- **`PollControl()` → GET `/control/{account}`** (with the heartbeat): reads `{"halt":bool}` into
+  `g_halt`. **FAIL-OPEN** — on any WebRequest error `g_halt` is left unchanged (trade execution
+  never depends on the orchestrator being reachable). When `g_halt`, `EntryCadence` arms **no new
+  ops** and cancels pendings, but **never flattens** an open op (= the breaker/kill semantics).
 
-`WebRequest` is disabled in the Strategy Tester, so telemetry is a no-op there
-(Phase B runs without it).
+`WebRequest` is disabled in the Strategy Tester, so telemetry/control are a no-op there
+(Phase B validation runs without them).
 
 ---
 

@@ -29,27 +29,27 @@ T0 = 1000.0
 tg = {l.account: l.weight * 0.10 * T0 for l in A.cfg.legs}
 for l in A.cfg.legs:
     tele(l.account, round(tg[l.account], 2))
-tele("main", round(T0 - sum(tg.values()), 2))
+tele("Main", round(T0 - sum(tg.values()), 2))
 
 st = client.get("/status").json()
 chk("status T ~= 1000", abs(st["T"] - 1000) < 1.0)
 chk("not halted at start", st["halted"] is False)
 chk("no pending transfers on-target", len(st["pending_transfers"]) == 0)
 chk("biggest target = btc-trail-1 ~33.8", any(abs(a["target"] - 33.8) < 0.6
-    and a["name"] == "btc-trail-1" for a in st["accounts"]))
+    and a["name"] == "PD3_BtcTrail_1" for a in st["accounts"]))
 
 # a leg wins (flat, balance above target) -> orchestrator should emit a sweep to Main
-r = tele("gold-geo-0", round(tg["gold-geo-0"] + 25, 2))
+r = tele("PD3_GoldGeo_0", round(tg["PD3_GoldGeo_0"] + 25, 2))
 chk("telemetry returns halt flag + T", "halt" in r and "T" in r)
 st = client.get("/status").json()
-sweep = [t for t in st["pending_transfers"] if t["src"] == "gold-geo-0" and t["reason"] == "sweep"]
+sweep = [t for t in st["pending_transfers"] if t["src"] == "PD3_GoldGeo_0" and t["reason"] == "sweep"]
 chk("win -> pending sweep gold-geo-0 -> main", len(sweep) == 1)
 
 # op close records an immutable R-stream row
-client.post("/op_close", json=dict(account="gold-geo-0", realized_r=2.5, positions=4,
+client.post("/op_close", json=dict(account="PD3_GoldGeo_0", realized_r=2.5, positions=4,
             reason="TP", close_time=1.0))
 st = client.get("/status").json()
-chk("op_close -> rstream has the row", any(o["account"] == "gold-geo-0" and
+chk("op_close -> rstream has the row", any(o["account"] == "PD3_GoldGeo_0" and
     abs(o["realized_r"] - 2.5) < 1e-6 for o in st["rstream"]))
 
 # control flag fail-open; manual halt/resume
@@ -62,8 +62,12 @@ chk("manual /resume -> halt=False", client.get("/control/btc-nb-2").json()["halt
 # circuit breaker via telemetry: crater equity > 35% from peak
 for l in A.cfg.legs:
     tele(l.account, 1.0, eq=1.0)
-tele("main", 1.0, eq=1.0)
+tele("Main", 1.0, eq=1.0)
 chk("breaker trips on >35% equity crater", client.get("/status").json()["halted"] is True)
+
+print("== dashboard ==")
+d = client.get("/")
+chk("GET / serves the control-center HTML", d.status_code == 200 and "CROSSKING" in d.text)
 
 print(f"\n{sum(P)}/{len(P)} passed")
 raise SystemExit(0 if all(P) else 1)
