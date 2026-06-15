@@ -22,21 +22,43 @@ import numpy as np
 import pandas as pd
 
 WCOLS = [f"w{i}" for i in range(130)]
-META = ["leg", "sym", "nbpR", "segpos", "rf", "oneop", "ops", "win",
-        "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"]
+META = ["leg", "sym", "nbpR", "segpos", "rf", "oneop", "extop1R", "nmonster", "ops", "win",
+        "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half",
+        "addtrig", "lineplace", "nback", "buffer"]
+
+# §3.6-REDUX archetype/aggression knobs (absent from pre-redux pools -> filled on load).
+REDUX_COLS = {"extop1R": np.nan, "nmonster": 0, "addtrig": 0, "lineplace": 0,
+              "nback": 0, "buffer": 0.0}
 
 
-def load_pool(pattern="out/opt/pool_*.csv", min_ops=30, min_nbpR=5.0, max_oneop=100.0):
-    """max_oneop: drop fragile JACKPOT candidates where a single op is > max_oneop%% of
-    the leg's totR (a pin-jackpot that won't repeat live; the weekly realized-R metric
-    also can't see a building stack's float drawdown, so these read falsely DD-free)."""
-    dfs = [pd.read_csv(f) for f in glob.glob(pattern)]
-    if not dfs:
-        raise FileNotFoundError(pattern)
-    df = pd.concat(dfs, ignore_index=True)
-    df = df[(df["ops"] >= min_ops) & (df["nbpR"] >= min_nbpR) & (df["oneop"] <= max_oneop)].copy()
-    # drop exact duplicate strategies (same leg+params) keeping the best score
-    keyc = ["leg", "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"]
+def arch_tag(row):
+    """Short archetype label: trigger / line-placement / buffer."""
+    trig = "pc" if int(row.get("addtrig", 0)) == 1 else "bo"          # poscandle / bounce
+    lp = {0: "ml", 1: f"nb{int(row.get('nback', 0))}", 2: "pp"}.get(int(row.get("lineplace", 0)), "ml")
+    return f"{trig}/{lp}/b{row.get('buffer', 0.0):.2f}"
+
+
+def load_pool(patterns=("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc_*.csv"),
+              min_ops=30, min_nbpR=5.0, min_extop=0.0):
+    """Union of the incumbent pool + the §3.6-REDUX archetype sweeps.
+    JACKPOT FILTER (replaces the blunt oneop cut): keep a candidate only if its totR
+    EX the single best op (`extop1R`) is >= min_extop -- i.e. it stays profitable without
+    its luckiest stack. This kills one-monster pin-jackpots while KEEPING genuine
+    recurring aggressive edges (high nbpR AND high extop1R) and smooth incumbents. Older
+    pools lacking extop1R fall back to the legacy oneop<=50 cut."""
+    files = [f for p in patterns for f in glob.glob(p)]
+    if not files:
+        raise FileNotFoundError(patterns)
+    df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+    for c, default in REDUX_COLS.items():
+        if c not in df.columns:
+            df[c] = default
+    jackpot_ok = (df["extop1R"].notna() & (df["extop1R"] >= min_extop)) | \
+                 (df["extop1R"].isna() & (df["oneop"] <= 50.0))
+    df = df[(df["ops"] >= min_ops) & (df["nbpR"] >= min_nbpR) & jackpot_ok].copy()
+    # drop exact duplicate strategies (same leg + full param signature) keeping best score
+    keyc = ["leg", "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half",
+            "addtrig", "lineplace", "nback", "buffer"]
     df = df.sort_values("score", ascending=False).drop_duplicates(keyc).reset_index(drop=True)
     return df
 
@@ -105,10 +127,11 @@ def promdate(df, budget=0.24, maxn=6, max_corr=1.0, verbose=True):
         if verbose:
             row = df.iloc[best_i]
             segp, _ = seg_robust(combined)
-            print(f"  +{len(sel)}: {row['leg']:<11} sz{int(row['sizing'])} sma{int(row['smaP'])} "
+            print(f"  +{len(sel)}: {row['sym'][:3]} {arch_tag(row):<10} sma{int(row['smaP'])} "
                   f"slow{int(row['slowP'])} step{row['step']:.2f} tp{row['tpR']:.2f} tr{row['trailR']:.2f} "
                   f"half{row['half']:.1f} | legNbpR={row['nbpR']:6.1f} legSeg={int(row['segpos'])}/6 "
-                  f"|| TEAM growth@{int(budget*100)}%DD={best_g:6.2f}x f={best_f:.3f} teamSeg={segp}/6")
+                  f"extop1R={row['extop1R']:6.1f} | TEAM growth@{int(budget*100)}%DD={best_g:6.2f}x "
+                  f"f={best_f:.3f} teamSeg={segp}/6")
     return sel, combined, cur
 
 
@@ -151,7 +174,8 @@ def report(df, sel, combined, budget=0.24):
         others = combined - Wm[i]
         c = np.corrcoef(Wm[i], others)[0, 1] if others.any() else 0.0
         row = df.iloc[i]
-        print(f"   {row['leg']:<11} corr_to_rest={c:+.2f}  nbpR={row['nbpR']:6.1f} seg={int(row['segpos'])}/6 "
+        print(f"   {row['sym'][:3]} {arch_tag(row):<10} corr_to_rest={c:+.2f}  nbpR={row['nbpR']:6.1f} "
+              f"seg={int(row['segpos'])}/6 extop1R={row['extop1R']:6.1f} nmon={int(row['nmonster'])} "
               f"1op={row['oneop']:.0f}%")
     return g, f
 

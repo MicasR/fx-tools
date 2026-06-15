@@ -60,3 +60,12 @@ extend `promdate.load_pool` (new cols + the refined aggressive gate: accept if s
 extop1R>floor & nmonster≥3) → run the greedy tournament → re-crown → head-to-head vs the
 current 3-dancer (57.5× @24%DD). Then finalist bootstrap-over-monsters + ship (Phase 5).
 <!-- candidate CSVs ready: gold_{poscandle,nback,pinprev}, btc_{poscandle,nback,pinprev} -->
+
+## Phase 3 PREVIEW — new archetypes ALONE (740 cands, no incumbents) = **12.2× @24%DD**
+⚠️ **Below the champion's 57.5×.** Team is 6/6, low-corr, positive extop1R everywhere — but
+`f=0.005` (tiny): the aggressive legs are so volatile that DD-budgeting to 24% forces a small
+compounding fraction → modest growth despite nbpR up to 333. **High nbpR ≠ high growth-at-DD**
+(totR-vs-compounding inversion, again). Conclusion: the new archetypes do NOT win standalone;
+any dethroning must come from **complementarity** with the SMOOTH incumbent legs (do they smooth
+bad segments enough to lift f?). Decisive test = the FULL-UNION tournament (needs `pool_gen`).
+Jackpot filter works: TP3 one-monster gold rows (extop1R −145) correctly excluded.
