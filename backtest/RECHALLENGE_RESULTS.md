@@ -38,4 +38,25 @@ Champion to beat: prom-date 3-dancer **57.5× @24%DD**, RF 25.1, 6/6 (the curren
 Incumbent ref on same engine: GoldS210 nbpR 157 but segpos **3/6** → the new nback5 is far smoother.
 
 ---
-<!-- next: BTC archetypes (poscandle/nback/pinprev), then Phase 3 promdate union + aggressive gate -->
+## BTC archetypes F + G — ✅ STRONGLY ALIVE (`out/opt/btc_*.csv`)
+- **poscandle** (182/240 pos): `step2.0/TP3/slowP210` → `nbpR **333**`, segpos 4/6, `extop1R **+114**`,
+  nmonster 13 (high-return, repeatable); `step1.4/TP3` → nbpR 128, **segpos 6/6**, win 21% (robust).
+- **nback** (292/320 pos, 91%): `nback5/TP3` → nbpR 169, segpos 3/6, `extop1R +47`, win 19%;
+  `nback20/TP2.5` → nbpR 71, segpos 4/6, extop1R +32, win 25%. (step swept but irrelevant at nback5.)
+- **pinprev** (261/300 pos): `buffer0/TP2/smaP11/half1.0` → nbpR 70, **segpos 6/6**, `extop1R +34`,
+  **win 32%**, RF 3.85 (fully robust); `buffer0/TP3` → nbpR 106, segpos 5/6, extop1R +38.
+- ✅ `_val` ||N fix VALIDATED: btc_pinprev = exactly 300 rows (was 900 pre-fix).
+
+## Phase 2 takeaways
+- ALL six new-archetype sweeps (gold+BTC × poscandle/nback/pinprev) produced **robust,
+  positive-extop1R, non-jackpot** candidates absent from the old pool — strongest on the gold side
+  (the crown's weak point: it had only a gold *shield*).
+- LOW TP consistently improves the aggressive tier (win-rate + segpos); confirmed 6×.
+- The aggressive gate's `extop1R` cleanly separates genuine edges from TP3 one-monster jackpots.
+
+---
+## Phase 3 (next): pool ALL candidates (new archetype CSVs + old incumbent `pool_*.csv`) →
+extend `promdate.load_pool` (new cols + the refined aggressive gate: accept if segpos≥5 OR
+extop1R>floor & nmonster≥3) → run the greedy tournament → re-crown → head-to-head vs the
+current 3-dancer (57.5× @24%DD). Then finalist bootstrap-over-monsters + ship (Phase 5).
+<!-- candidate CSVs ready: gold_{poscandle,nback,pinprev}, btc_{poscandle,nback,pinprev} -->
