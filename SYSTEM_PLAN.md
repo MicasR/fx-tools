@@ -282,7 +282,40 @@ tiny moves), automate the PA later.
 
 ---
 
+## 12. DEPLOYMENT TARGET = the KING (research phase COMPLETE 2026-06-15)
+
+**King = GROWTH-6 weight-optimized** (FIDELITY §3.6-REDUX). 6 legs, each its own ops-account;
+the weight = that account's capital-allocation share. Presets `presets/PD3_*.set` +
+`PD3_KING_manifest.md`. In-sample (tester-true, $1000 @24%DD): **$40,919, PF 2.69, RF 5.39, 6/6
+segments** (+68/+140/+1/+63/+136/+104), max concurrent 5.4%.
+
+| leg (ops-account) | sym | mgmt | weight |
+|---|---|---|---|
+| PD3_BtcTrail_1 (geofloor trail sma15/sl270) | BTCUSDc | H1 | **33.8%** |
+| PD3_GoldGeo_0 (proggeo sma7/step1.7/TP3) | XAUUSDc | M15 | **24.1%** |
+| PD3_BtcTrail_4 (proggeo trail sma15/step1.2) | BTCUSDc | H1 | **16.1%** |
+| PD3_BtcNb_2 (nback15/buf0.5/step2/TP1) | BTCUSDc | H1 | **10.5%** |
+| PD3_BtcPin_5 (pinprev/buf0.4/sma13/TP1.5) | BTCUSDc | H1 | **8.4%** |
+| PD3_GoldGeo_3 (geofloor sma9/sl300/TP3) | XAUUSDc | M15 | **7.0%** |
+
+### Falsifiability contract — read BEFORE funding (anti-confirmation-bias, pre-committed)
+The headline ($40,919) is the **in-sample, one-regime, selection-flattered** number. Deploy on
+the HONEST figure and pre-armed kill-criteria, not the headline:
+- **EXPECTATION = the bootstrap median ≈ 12× over ~2.4yr**, NOT 40×. Anything near the headline is
+  upside, not the plan. Size `f` so realized DD stays ≤ the 24% budget (≈0.9%/unit; concurrent ≤~5%).
+- **The thesis under test:** *high-compound trades, downside capped at −1R, occur OFTEN ENOUGH.*
+  It is validated only **in-sample / in the 2024-26 regime.** S3≈0 shows a hostile regime already
+  exists inside the window.
+- **DISCONFIRMATION TRIGGERS (any → de-risk/halt, do NOT rationalize):**
+  1. realized DD exceeds **~30%** (the modeled 24% + fidelity margin), OR
+  2. monster frequency drops below **~1 per quarter** (the "often enough" premise failing), OR
+  3. any rolling **3-month live segment is net-negative beyond ~−5R** (a live S3), OR
+  4. live per-leg R-stream diverges **>~15%** from the tester for the aggressive (path-jittery) legs.
+- **Rollout is the real out-of-sample test:** demo → $100 shakedown (mechanics) → $1000 (f≈1%),
+  with the triggers armed. The crown is the best *hypothesis*; the market it never saw is the judge.
+
 ## Open / future (parked, do not start unprompted)
 - Full transfer automation (Exness Personal Area scripting) if semi-manual gets tedious.
 - The parked research arcs: *why* the breakout works on gold/BTC but not silver/FX; a
   cross-symbol correlation screen for a 3rd uncorrelated stream.
+- Out-of-sample / different-regime validation when a non-bull stretch of gold/BTC data exists.

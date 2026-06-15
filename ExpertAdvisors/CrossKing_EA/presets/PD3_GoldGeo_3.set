@@ -1,0 +1,29 @@
+; KING (GROWTH-6 weight-opt) -- PD3_GoldGeo_3 -- weight 7.0% of capital
+; XAUUSDc chart H1, mgmt M15. tester-true nbpR~103, seg5/6.
+; ORCHESTRATOR: fund this ops-account with 7.0% of pooled risk capital (InpFixedE0=0 live).
+InpLegName=PD3_GoldGeo_3
+InpMagicNumber=30260624
+InpEntryTF=16385
+InpMgmtTF=15
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=1
+InpSmaP=9
+InpSlowP=300
+InpMult=0.015
+InpProgStep=1.4
+InpHalf=0.3
+InpTpR=3.0
+InpTrailR=0.0
+InpAddTrigger=0
+InpLinePlace=0
+InpNBack=0
+InpLineBuffer=0.0
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

@@ -1,0 +1,29 @@
+; KING (GROWTH-6 weight-opt) -- PD3_BtcNb_2 -- weight 10.5% of capital
+; BTCUSDc chart H1, mgmt H1. tester-true nbpR~32, seg4/6.
+; ORCHESTRATOR: fund this ops-account with 10.5% of pooled risk capital (InpFixedE0=0 live).
+InpLegName=PD3_BtcNb_2
+InpMagicNumber=30260623
+InpEntryTF=16385
+InpMgmtTF=16385
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=1
+InpSmaP=15
+InpSlowP=0
+InpMult=0.015
+InpProgStep=2.0
+InpHalf=0.5
+InpTpR=1.0
+InpTrailR=0.0
+InpAddTrigger=0
+InpLinePlace=1
+InpNBack=15
+InpLineBuffer=0.5
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

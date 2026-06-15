@@ -143,6 +143,18 @@ sma15/slow270/tr2.5, BtcNb_2 nback15/buf0.5/step2.0/TP1, GoldGeo_3 geofloor sma9
 proggeo sma15/step1.2/tr2.5, BtcPin_5 pinprev/buf0.4/sma13/TP1.5). `_finalist.py`, `_gen_presets.py`.
 **Deployment: back-loading + aggressive-leg path-jitter → size conservatively (f near bootstrap median, not raw).**
 
+## ✅ RESEARCH PHASE COMPLETE (2026-06-15) — KING CROWNED
+**KING = GROWTH-6 weight-optimized.** $1000 @24%DD = **$40,919, PF 2.69, RF 5.39, 6/6 segs**
+(+68/+140/+1/+63/+136/+104), max concurrent 5.4%. Weights: BtcTrail(15/270) 34%, GoldGeo(sma7) 24%,
+BtcTrail(15) 16%, BtcNback15 11%, BtcPin 8%, GoldGeo(sma9) 7%. Presets `presets/PD3_*.set` +
+`PD3_KING_manifest.md`. Report/image `_king.py` → `out/king_equity.png`.
+**HONEST FRAME (anti-confirmation-bias, user-aware): in-sample/one-regime/selection-flattered →
+deploy on bootstrap-median ≈12× expectation (NOT 40×) + pre-armed kill-criteria (DD>30%, monster
+freq <1/qtr, 3mo live seg <−5R, aggressive-leg divergence >15%). Falsifiability contract in
+`SYSTEM_PLAN.md §12`.** ▶ Research DONE; next = deployment arc (orchestrator → demo → $100 → $1000).
+Tools added this arc: `_tournament/_champion/_resweep_all/_finalist/_gen_presets/pd2_money/
+_rf_compare/_rf_plot/_crown_compare/_weights/_contenders/_king/_gen_pd3.py`.
+
 ## Phase 6 — RECOVERY-FACTOR objective (user: "too much DD; look at RF first")
 Added `objective="rf"` to `promdate` (greedy maximizes team RF = totR/maxDD, ex-top3wk so not
 jackpot-inflatable). RF-first surfaces a DIFFERENT, drawdown-efficient team:
