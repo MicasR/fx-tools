@@ -52,7 +52,9 @@
 
 #include <Trade\Trade.mqh>
 
-enum ENUM_CK_SIZING { CK_PROGGEO = 0, CK_GEOFLOOR = 1 };   // stack add-sizing rule
+enum ENUM_CK_SIZING  { CK_PROGGEO = 0, CK_GEOFLOOR = 1 };          // stack add-sizing rule
+enum ENUM_CK_ADDTRIG { ADD_SMA_BOUNCE = 0, ADD_POSCANDLE = 1 };    // when an add arms (RSI_RECOVERY reserved)
+enum ENUM_CK_LINE    { LINE_MARGIN = 0, LINE_NBACK = 1, LINE_PINPREV = 2 }; // add liquidation anchor
 
 input group              "== Leg identity / preset =="
 input string             InpLegName       = "GoldGeo17";   // Leg name (telemetry)
@@ -76,6 +78,9 @@ input double             InpProgStep      = 1.7;             // Geometric step
 input double             InpHalf          = 0.5;             // Favourable gate (R) before adds arm
 input double             InpTpR           = 3.0;             // Fixed TP in R (0 = none)
 input double             InpTrailR        = 0.0;             // Chandelier trail in R (0 = none)
+input ENUM_CK_ADDTRIG    InpAddTrigger    = ADD_SMA_BOUNCE;  // Add trigger: SMA-bounce vs poscandle
+input ENUM_CK_LINE       InpLinePlace     = LINE_MARGIN;     // Add anchor: margin / N-back struct / pinprev
+input int                InpNBack         = 0;               // N candles back for structural anchor (LINE_NBACK)
 
 input group              "== Specs / risk (1:2000 assumed) =="
 input double             InpFixedE0       = 0.0;             // Fixed 1R in $ (0 = whole balance/LIVE; >0 = tester validation)
@@ -102,6 +107,8 @@ double   g_bal_open = 0.0;     // account balance at op-open (for realized-R = P
 bool     g_ok     = false;     // favourable gate reached (>= InpHalf*R)
 double   g_ext    = 0.0;       // running extreme since entry (for the trail)
 bool     g_arm_b  = false;     // bounce armed (price went wrong side of SMA)
+double   g_anc_b  = 0.0;       // current bounce extreme accumulator (0 = none)
+double   g_prev_anc = 0.0;     // previous bounce extreme (LINE_PINPREV reference)
 datetime g_op_open_time = 0;   // op open timestamp (telemetry)
 //--- geometric add-sizing state (latched at op-open; do NOT derive from the live
 //--- book -- MT5's PositionsTotal() order is newest-first, so ScanBook()[0] is the
@@ -361,7 +368,7 @@ double Flr(double x)
 //| the live book is newest-first and (with order splits) longer than |
 //| the add count, both of which break the geometric ramp.           |
 //+------------------------------------------------------------------+
-double SizeAdd(const double &entries[], const double &lots[], double P, double slow,
+double SizeAdd(const double &entries[], const double &lots[], double P, double anchor,
                int dd, double E0, double ml)
 {
    double base = g_base_lot;
@@ -369,8 +376,8 @@ double SizeAdd(const double &entries[], const double &lots[], double P, double s
    double g    = Flr(base * InpMult * MathPow(InpProgStep, k));
    if(InpSizing == CK_PROGGEO)
       return g;
-   // geofloor: max(geometric ramp, lot pinning equity-0 to the slow-SMA anchor)
-   double S = (dd == 1) ? MathMax(ml, slow) : MathMin(ml, slow);
+   // geofloor: max(geometric ramp, lot pinning equity-0 to the anchor); anchor 0 -> ml
+   double S = (anchor != 0.0) ? ((dd == 1) ? MathMax(ml, anchor) : MathMin(ml, anchor)) : ml;
    double pin = LotToPin(entries, lots, P, S, dd, E0);
    return MathMax(g, pin);
 }
@@ -512,6 +519,7 @@ void OnOpOpened(const double &entries[], const double &lots[])
    g_ok   = (InpHalf <= 0);
    g_ext  = g_e0;
    g_arm_b = false;
+   g_anc_b = 0.0; g_prev_anc = 0.0;
    g_base_lot = SumLots(lots);   // book = just the base at op-open -> geometric unit lot
    g_add_count = 0;              // no adds yet -> next add is k = 0
    g_op_open_time = TimeCurrent();
@@ -536,6 +544,7 @@ void OnOpClosed()
    PrintFormat("[CrossKing:%s] OP CLOSE  R=%.3f  bal=%.2f", InpLegName, realizedR, bal);
    TelemetryOpClose(realizedR);
    g_inop = false; g_dir = 0; g_e0 = g_r0 = g_E0 = g_ext = 0; g_ok = false; g_arm_b = false;
+   g_anc_b = 0.0; g_prev_anc = 0.0;
    g_base_lot = 0.0; g_add_count = 0;
    DeletePendings(0);
 }
@@ -625,6 +634,17 @@ void ArmStop(bool is_buy, double price, double sl)
    }
 }
 
+//+------------------------------------------------------------------+
+//| Structural anchor: low/high InpNBack candles back (LINE_NBACK).   |
+//| 0 unless LINE_NBACK is selected with InpNBack > 0.                |
+//+------------------------------------------------------------------+
+double StructAnchor()
+{
+   if(InpLinePlace != LINE_NBACK || InpNBack <= 0) return 0.0;
+   return (g_dir == 1) ? iLow(_Symbol, InpMgmtTF, 1 + InpNBack)
+                       : iHigh(_Symbol, InpMgmtTF, 1 + InpNBack);
+}
+
 //+==================================================================+
 //|   MANAGEMENT CADENCE  (closed chart bar; the just-closed bar = 1) |
 //|   Order mirrors conc_engine: update ext (trail) -> update ok ->   |
@@ -648,21 +668,52 @@ void ManagementCadence()
    double fav = g_dir * (adv - g_e0) / g_r0;
    if(fav >= InpHalf) g_ok = true;
 
-   // 3) SMA-bounce add (stack presets only)
+   // 3) ADD trigger (stack presets only): SMA-bounce or poscandle; anchor per InpLinePlace
    if(InpStack && g_ok)
    {
-      double sma = SmaClose(InpSmaP, 1);
-      bool wrong = (g_dir == 1) ? (bc < sma) : (bc > sma);
-      bool back  = (g_dir == 1) ? (bc >= sma) : (bc <= sma);
-      if(wrong)
-         g_arm_b = true;
-      else if(back && g_arm_b)
+      double last  = LadderExtreme(e_arr);                   // most-recent add entry
+      bool   gated = (g_dir == 1) ? (bc > last) : (bc < last);
+      double nb    = StructAnchor();                         // 0 unless LINE_NBACK & InpNBack>0
+      double slowA = (InpSlowP > 0) ? SmaClose(InpSlowP, 1) : 0.0;
+
+      if(InpAddTrigger == ADD_POSCANDLE)
       {
-         g_arm_b = false;
-         double last = LadderExtreme(e_arr);                 // most-recent add entry
-         bool gated = (g_dir == 1) ? (bc > last) : (bc < last);
-         if(gated)
-            DoAdd(e_arr, l_arr, bc);
+         double bo = iOpen(_Symbol, InpMgmtTF, 1);           // add on every confluent in-trend candle
+         bool   confluent = (g_dir == 1) ? (bc > bo) : (bc < bo);
+         if(confluent && gated)
+            DoAdd(e_arr, l_arr, bc, (nb != 0.0) ? nb : slowA, false);
+      }
+      else  // ADD_SMA_BOUNCE: wrong-side-of-SMA, then back
+      {
+         double sma   = SmaClose(InpSmaP, 1);
+         bool   wrong = (g_dir == 1) ? (bc < sma) : (bc > sma);
+         bool   back  = (g_dir == 1) ? (bc >= sma) : (bc <= sma);
+         if(wrong)
+         {
+            g_arm_b = true;
+            double ext = (g_dir == 1) ? bl : bh;             // accumulate the bounce extreme
+            g_anc_b = (g_anc_b == 0.0) ? ext
+                      : ((g_dir == 1) ? MathMin(g_anc_b, ext) : MathMax(g_anc_b, ext));
+         }
+         else if(back && g_arm_b)
+         {
+            g_arm_b = false;
+            double cur_anc = g_anc_b;
+            if(gated && InpLinePlace == LINE_PINPREV)
+            {
+               bool beyond = (g_prev_anc != 0.0) &&
+                             ((g_dir == 1) ? (g_prev_anc < cur_anc) : (g_prev_anc > cur_anc));
+               double S = beyond ? g_prev_anc : cur_anc;     // prev_fb = "current"
+               if(S != 0.0) DoAdd(e_arr, l_arr, bc, S, true);
+            }
+            else if(gated)
+            {
+               double anc = (nb != 0.0) ? nb : (slowA != 0.0 ? slowA : cur_anc);
+               DoAdd(e_arr, l_arr, bc, anc, false);
+            }
+            if(cur_anc != 0.0) g_prev_anc = cur_anc;
+            g_anc_b = 0.0;
+         }
       }
    }
 
@@ -702,11 +753,13 @@ int PlaceSplit(bool is_buy, double total, string comment)
 //+------------------------------------------------------------------+
 //| Place one stacking add (market at ~close), splitting over VOL_MAX.|
 //+------------------------------------------------------------------+
-void DoAdd(const double &entries[], const double &lots[], double P)
+void DoAdd(const double &entries[], const double &lots[], double P, double anchor, bool pinExact)
 {
-   double slow = (InpSlowP > 0) ? SmaClose(InpSlowP, 1) : 0.0;
-   double ml   = MarginLine(entries, lots, g_dir, g_E0);
-   double x    = SizeAdd(entries, lots, P, slow, g_dir, g_E0, ml);
+   double ml = MarginLine(entries, lots, g_dir, g_E0);
+   // pinExact (LINE_PINPREV): size the add so book liquidation lands exactly on `anchor`
+   // (the structural level); otherwise the proggeo/geofloor ramp via SizeAdd.
+   double x = pinExact ? LotToPin(entries, lots, P, anchor, g_dir, g_E0)
+                       : SizeAdd(entries, lots, P, anchor, g_dir, g_E0, ml);
    x = MarginCap(x, entries, lots, P, g_dir, g_E0);     // free-margin cap (no per-order clamp)
    if(x < VOL_STEP) return;
    // split a >VOL_MAX add into multiple positions (250 -> 200 + 50)
@@ -764,6 +817,7 @@ void AdoptExistingOp()
    g_bal_open = AccountInfoDouble(ACCOUNT_BALANCE);
    g_r0  = (sl0 > 0) ? MathAbs(g_e0 - sl0) : MathAbs(g_e0 - MarginLine(e_arr, l_arr, g_dir, g_E0));
    g_ok  = true;                                  // assume gate already passed
+   g_arm_b = false; g_anc_b = 0.0; g_prev_anc = 0.0;
    g_ext = (g_dir == 1) ? iHigh(_Symbol, InpMgmtTF, 0) : iLow(_Symbol, InpMgmtTF, 0);
    // best-effort sizing state: base = the oldest (first-opened) position's volume;
    // k = number of adds already on the book (= positions - 1).

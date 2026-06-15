@@ -86,9 +86,14 @@ structural SL.
 ### Management (`ManagementCadence`, on each closed chart bar) — order matches the engine
 1. **Running extreme** `ext` updated with the just-closed bar's high/low (for the trail).
 2. **Favourable gate**: `fav = d·((H or L) − e0)/R`; once `fav ≥ InpHalf` (0.5), latch `ok`.
-3. **SMA-bounce add** (stack presets, `ok` only): close goes **wrong side** of
-   `SMA(smaP)` then **back**; on the back-cross, if **gated** (`close` beyond the
-   ladder extreme), add one position:
+3. **Add trigger** (stack presets, `ok` only) — selected by **`InpAddTrigger`**
+   (FIDELITY §3.6-REDUX, `RECHALLENGE_PLAN.md`):
+   - **`ADD_SMA_BOUNCE`** (default): close goes **wrong side** of `SMA(smaP)` then
+     **back**; on the back-cross, if **gated** (`close` beyond the ladder extreme), add.
+   - **`ADD_POSCANDLE`**: add on **every confluent in-trend candle** (`close > open` long
+     / `close < open` short) while gated — mirrors `conc_engine` `trig="poscandle"`.
+
+   The add lot is then sized (gated case):
    - **proggeo**: `lot = max(0.01, qfloor(base·mult·step^k))`, where `base = g_base_lot`
      and `k = g_add_count` — **both latched op-state, NOT read from the live book**.
      `g_base_lot` = the base-position volume captured at op-open; `g_add_count` = the
@@ -99,8 +104,16 @@ structural SL.
      `g_add_count` (logical adds) also stays correct when one add is split over
      `VOL_MAX` into several positions.
    - **geofloor**: `max(proggeo lot, lot_to_pin(book, close, S))`,
-     `S = max(margin_line, SMA(slowP))` (long) / `min(...)` (short). The pin term reads
-     the live book (order-independent sums) and was always correct.
+     `S = max(margin_line, anchor)` (long) / `min(...)` (short). The pin term reads
+     the live book (order-independent sums) and was always correct. The **anchor** is
+     chosen by **`InpLinePlace`**: `LINE_MARGIN` → `SMA(slowP)` (the original geofloor);
+     `LINE_NBACK` → the structural low/high **`InpNBack`** candles back. (FIDELITY
+     §3.6-REDUX archetype **G**.)
+   - **pinprev** (`InpLinePlace = LINE_PINPREV`, SMA-bounce only): instead of the
+     ramp/geofloor lot, pin the book's liquidation **exactly** to the **prior bounce
+     extreme** (`g_prev_anc`) when price has pushed beyond it, else the current bounce
+     extreme — `lot = lot_to_pin(book, close, S)` (no `max` with the geometric ramp),
+     mirroring `conc_engine` `pin_add`. Uses the tracked `g_anc_b`/`g_prev_anc` state.
    - then the **free-margin cap** `lot ≤ qfloor(eq/MPL − openLots)`, `eq = E0 +
      floating`.
    - **per-order split** (`PlaceSplit`): the broker rejects any single order above
@@ -123,9 +136,11 @@ All positions carry the **same** SL/TP price → the whole book exits together a
 survive EA/VPS hiccups), unlike the engine's bar-close check — a deliberate
 robustness gain (see §6 drift).
 
-`anc_b` (the wrong-side extreme) is **not** used for sizing in any of the 6 legs
-(geofloor anchors on the slow SMA; proggeo ignores the anchor) — so the EA tracks
-only the armed flag, not the extreme.
+`g_anc_b` (the wrong-side bounce extreme) and `g_prev_anc` are used **only** by
+`LINE_PINPREV` (archetype G). The 6 *locked* legs use `LINE_MARGIN`/proggeo, where the
+anchor is the slow SMA or ignored, so those legs are unaffected by this state — the
+defaults (`ADD_SMA_BOUNCE`, `LINE_MARGIN`, `InpNBack=0`) reproduce the pre-redux EA
+exactly (logic-preserving; confirmed by re-running the 3 presets in Phase 2).
 
 ---
 
