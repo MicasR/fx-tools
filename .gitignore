@@ -12,3 +12,10 @@
 *.set
 # ...except the CrossKing leg presets: pure strategy params, no credentials.
 !ExpertAdvisors/CrossKing_EA/presets/*.set
+
+# Python
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
