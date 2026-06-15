@@ -113,6 +113,74 @@ InpHeartbeatSec=30
     return df.sort_values("score", ascending=False).reset_index(drop=True)
 
 
+LOG_DIR = rf"{TERM}\Tester\logs"
+
+
+def run_single(leg, fixed=None, timeout=900):
+    """Single-pass tester run (Optimization=0) of one fully-specified dancer. Parses the
+    last init segment of the tester log for the OnTester line + OP CLOSE stream. Returns
+    dict(ops, nbpR, segpos, rf, oneop, win, R[list]). OnTester prints even in single mode."""
+    import glob as _glob
+    import datetime as _dt
+    L = dict(LEGS[leg]); L.update(fixed or {})
+    half = L.get("half", 0.5)
+    knobs = "\n".join(f"{KNOB[k]}={L.get(k, half if k=='half' else 0)}"
+                      for k in ["sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"])
+    rpt = rf"{TERM}\MQL5\Files\CK_single_{leg}"
+    ini = f"""[Tester]
+Expert=CrossKing_EA\\CrossKing_EA.ex5
+Symbol={L['sym']}
+Period={L['per']}
+Optimization=0
+Model=1
+FromDate=2024.02.26
+ToDate=2026.06.13
+ForwardMode=0
+Deposit=100000
+Currency=USD
+Leverage=2000
+ExecutionMode=0
+Visual=0
+ShutdownTerminal=1
+[TesterInputs]
+InpLegName={leg}
+InpMagicNumber={L['mg']}
+InpEntryTF=16385
+InpMgmtTF={L['mtf']}
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack={L['stack']}
+{knobs}
+InpFixedE0=10.0
+InpTROverride=0.0
+InpMPLOverride={L['mpl']}
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30
+"""
+    ini_path = rf"{INI_DIR}\ck_single_{leg}.ini"
+    with io.open(ini_path, "w", encoding="utf-16-le") as f:
+        f.write(ini)
+    subprocess.run([EXE, f"/config:{ini_path}"], timeout=timeout)
+    # parse the freshest tester log, last init segment
+    logf = max(_glob.glob(rf"{LOG_DIR}\*.log"), key=os.path.getmtime)
+    raw = io.open(logf, "r", encoding="utf-16-le", errors="ignore").read().splitlines()
+    ii = max((k for k, ln in enumerate(raw) if "init  sym" in ln and leg in ln), default=-1)
+    seg = raw[ii:] if ii >= 0 else []
+    import re as _re
+    R = [float(m.group(1)) for ln in seg for m in [_re.search(r"OP CLOSE  R=(-?[\d.]+)", ln)] if m]
+    ot = {}
+    for ln in seg:
+        m = _re.search(r"OnTester  ops=(\d+) nbpR=([-\d.]+) segpos=(\d+)/6 RF=([-\d.]+) 1op=([-\d.]+)%", ln)
+        if m:
+            ot = dict(ops=int(m.group(1)), nbpR=float(m.group(2)), segpos=int(m.group(3)),
+                      rf=float(m.group(4)), oneop=float(m.group(5)))
+    ot["R"] = R
+    return ot
+
+
 def show(df, n=15):
     cols = ["score", "nbpR", "segpos", "rf", "oneop", "ops", "win",
             "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"]
