@@ -114,6 +114,12 @@ structural SL.
      extreme** (`g_prev_anc`) when price has pushed beyond it, else the current bounce
      extreme — `lot = lot_to_pin(book, close, S)` (no `max` with the geometric ramp),
      mirroring `conc_engine` `pin_add`. Uses the tracked `g_anc_b`/`g_prev_anc` state.
+   - **`InpLineBuffer`** (R units, the **aggression dial**): the pin target `S` is floored so
+     the liquidation line can never sit closer than `InpLineBuffer·R` to current price
+     (`FloorAnchor`, mirrors `conc_engine` `floored_anchor`). `0` = aggressive (line may hug
+     price → margin-maxed lot → frequent −1R blow-ups but monster upside); larger = conservative
+     (caps the pin family). Applied to **both** geofloor and pinprev anchors. (FIDELITY
+     §3.6-REDUX; sweeps the conservative/mild/aggressive bands.)
    - then the **free-margin cap** `lot ≤ qfloor(eq/MPL − openLots)`, `eq = E0 +
      floating`.
    - **per-order split** (`PlaceSplit`): the broker rejects any single order above
@@ -234,6 +240,13 @@ team selector (`backtest/promdate.py`).
   MQL5-Cloud agents) to `MQL5/Files/ck_opt.csv`. Harness: `backtest/opt_run.py`,
   `pool_gen.py`/`pool_dense.py`, `promdate.py`. Runs on the **MetaQuotes** terminal
   (Exness account + cloud agents), NOT the EXNESS terminal.
+- **`ck_opt.csv` columns** (`CK_NMETA`=23 leading + `w0..w129` weekly): `pass, score, nbpR,
+  segpos, rf, oneop, ops, win, sizing, smaP, slowP, mult, step, tpR, trailR, half, mgmtTF,
+  stack,` **`extop1R, nmonster, addtrig, lineplace, nback, buffer`**. The last block (added
+  FIDELITY §3.6-REDUX): `extop1R` = totR ex the single best op and `nmonster` = #ops ≥
+  `CK_MONSTER_R`(5R) drive the **aggressive-strategy gate** (recurrence-not-luck), and
+  `addtrig/lineplace/nback/buffer` identify the archetype + aggression tier of each candidate
+  (see `RECHALLENGE_PLAN.md` §4.5/§5).
 
 ## 9. PROM-DATE 3-dancer team (LOCKED 2026-06-15 — replaces the oracle kings)
 Tester-true (NBP, $1000, growth@24%DD = **57.5×**, PF 1.49, RF 25.1, 6/6, win 34%,

@@ -89,6 +89,34 @@ QUEUED as a fast-follow only if F/G don't dethrone the king (net-new, zero prior
 - New team vs current 3-dancer (§2.4 gate). Crown only if it clears the gate. If the current
   king survives, that is a legitimate result and we say so.
 
+### Phase 4.5 — Aggression: tiers + the aggressive-strategy gate (the hard part)
+**Why this matters:** aggressive pin/geofloor stacks blow up the 1R ops-account often but can
+return **+100R in one trade (~quarterly on gold)**. NBP caps each blow-up at **−1R**, so an
+aggressive leg = a stream of mostly `−1R` with rare monsters — a *bounded-cost asymmetric bet*,
+not ruin. The metric is fine; the old **selection filters discriminate against it**: the blunt
+`oneop ≤ 40–50%` cut can't tell a recurring monster edge from a one-shot curve-fit jackpot, and
+the **6/6 segment-positivity** gate structurally rejects lumpy returns. Gold is where this bites.
+
+**Aggression is a continuous dial → sweep it, don't pick it.** Controlled by `InpLineBuffer`
+(→0 = aggressive, line hugs price, lots maxed), `InpProgStep`, geofloor anchor distance
+(`InpSlowP`), and `InpHalf`. Every archetype is swept across **conservative / mild / aggressive**
+bands; **all three tiers compete as separate dancers** (tagged by tier — never pre-collapsed).
+
+**Refined acceptance (replaces the blunt 1-op cut), per candidate:**
+- **Smooth path:** accept if `segpos ≥ 5` (the old robustness, for non-aggressive legs).
+- **Aggressive path:** accept a lumpy leg if it proves *recurrence, not luck* —
+  `extop1R > min_floor` (totR **ex the single best op** stays clearly positive) **AND**
+  `nmonster ≥ 3` (≥3 ops ≥ `CK_MONSTER_R`=5R) **AND** those monsters span **≥2 segments**.
+  One-segment / one-monster wonders (the pin-jackpot) are still rejected.
+- **Finalist bootstrap:** resample which monster ops "landed"; the team must beat the champion
+  in most resamples (drop-any-1-monster survival). This is the statistically-correct robustness
+  test for ~8 monster opportunities — it *replaces* segment-positivity for the aggressive tier.
+- (EA now ships `extop1R`, `nmonster` per pass; `promdate.load_pool` META + filter to be
+  extended in Phase 3, and `validate_finalists.py` gets the bootstrap.)
+- **Soft tiebreaker (deployment-aware):** between equal-growth tiers, prefer **fewer blow-ups**
+  (refund-latency drag under the semi-manual Telegram model); flag any leg whose blow-up rate
+  outpaces a realistic refund cadence (backtest assumes instant re-seed; reality doesn't).
+
 ### Phase 5 — Ship
 - Regenerate `PD_*.set` presets for the new team, update `_Spec.md`, `shadow_streams`, and the
   memory ([[project-promdate-kings]]). Resume `SYSTEM_PLAN.md` deployment with the true team.
@@ -114,7 +142,39 @@ context**. Discipline for the parts that touch my context:
 
 ---
 
-## 5. Status / log
+## 5. Staged optimizer grids (Phase 2 — sweep on MetaQuotes terminal + cloud)
+
+Common to all: chart **H1**; `InpMgmtTF` = M15 (gold XAUUSDc) / H1 (BTC BTCUSDc); `InpStack=true`;
+entry knobs fixed (V-pattern). Validation sizing `InpFixedE0=10`, real `TR`/`MPL` overrides per
+[[reference-mt5-junction-setup]] / FIDELITY §5. Score = NBP `OnTester`. Each pass → one `ck_opt.csv`
+row (now carrying `extop1R`,`nmonster`,`addtrig`,`lineplace`,`nback`,`buffer`).
+
+**Aggression tier = (buffer × step × anchor) band** (the dial, not a free axis):
+
+| tier | `InpLineBuffer` (R) | `InpProgStep` | `InpSlowP` (geofloor) |
+|---|---|---|---|
+| aggressive   | 0.0       | 1.7, 2.0 | 150, 180 (tight = big lots) |
+| mild         | 0.25, 0.5 | 1.4, 1.5 | 210 |
+| conservative | 0.75, 1.0 | 1.1, 1.2 | 270, 330 |
+
+**Archetype F — poscandle compounding:** `InpAddTrigger=ADD_POSCANDLE`,
+`InpSizing ∈ {CK_PROGGEO, CK_GEOFLOOR}`, `InpLinePlace ∈ {LINE_MARGIN, LINE_NBACK}`,
+`InpSmaP ∈ {5,7,11}` (gold) / `{12,15,18}` (BTC), `InpHalf ∈ {0,0.5,1.0}`, exit `TpR=3` or
+`TrailR ∈ {2.5,3.5}` × the 3 tiers.
+
+**Archetype G — structural / grid-SL line placement:** `InpAddTrigger=ADD_SMA_BOUNCE`,
+`InpSizing=CK_GEOFLOOR`, two flavors:
+- `InpLinePlace=LINE_NBACK`, `InpNBack ∈ {5,10,20}` (structural low/high N back), × tiers;
+- `InpLinePlace=LINE_PINPREV` (pin to prior bounce extreme), × buffer (`{0,0.25,0.5,0.75}`).
+
+**Baseline (re-confirm A–E width):** re-run the existing geofloor/proggeo/shield/trail grid
+(old `pool_gen.py`) so the incumbent family competes on the SAME corrected engine + filter.
+
+Densify (`pool_dense.py`-style) only where the surface is alive. Keep gold & BTC pools separate
+files; prom-date pools the union. **Estimated passes are large → cloud agents; results reduce to
+one summary leaderboard per archetype (token protocol §4).**
+
+## 6. Status / log
 - **2026-06-15: plan written.** Coverage matrix established from EA source + memory. GAP
   confirmed: archetypes F (poscandle), G (structural/grid-SL) never had a tester-true trial
   (killed on oracle); H (RSI) never built.
@@ -126,6 +186,19 @@ context**. Discipline for the parts that touch my context:
   `InpNBack`. `SizeAdd` generalized to an explicit anchor; `DoAdd(…, anchor, pinExact)` branches
   geofloor-ramp vs `lot_to_pin` (pin_add); new `g_anc_b`/`g_prev_anc` op-state (reset at
   open/close/adopt). **Compiles 0 errors / 0 warnings.** Default path is logic-preserving (the 3
-  locked presets reproduce). Spec §3 updated. NEXT = Phase 2: regression-confirm the 3 presets on
-  the headless tester, then author per-archetype optimizer grids (poscandle, nback, pinprev) and
-  sweep on the MetaQuotes terminal + cloud agents → one candidate CSV each.
+  locked presets reproduce). Spec §3 updated.
+- **2026-06-15: ✅ AGGRESSION + BUFFER added (user requirements).** EA: `InpLineBuffer` (R units,
+  the aggression dial — 0=aggressive/line hugs price, >0 caps the pin family; `FloorAnchor` applied
+  to geofloor + pinprev anchors, mirrors `conc_engine` `floored_anchor`). `OnTester` now also ships
+  **`extop1R`** (totR ex the single best op) and **`nmonster`** (#ops ≥ 5R) for the aggressive gate,
+  plus the new identifying params (`addtrig`,`lineplace`,`nback`,`buffer`) — `ck_opt.csv` header +
+  `OnTesterPass` extended; `CK_NMETA=23`. Compiles 0/0. **Methodology for optimizing aggressive
+  (blow-up-prone, monster-return) strategies = new §4.5** (tier-sweep the aggression dial; replace
+  the blunt 1-op cut with an ex-top-1 + monster-recurrence + bootstrap gate; prom-date marginal
+  selection unchanged). **Tiered grids staged in §5.** NOTE (correction): RSI exists as an OLD
+  single-stream `pyramid_engine.run_tf` prototype (`_rsi`), never in the concurrent engine/EA/tester
+  — so the "RSI queued" call stands.
+- **▶ NEXT = Phase 2 (needs MT5 terminal):** (a) regression-confirm the 3 locked presets reproduce
+  on the headless tester; (b) launch the §5 archetype sweeps on the MetaQuotes terminal + cloud
+  agents → one candidate CSV per archetype. Then Phase 3 (extend `promdate.load_pool` META/filter +
+  pool the union), Phase 4/4.5 (re-crown + aggressive gate + head-to-head), Phase 5 (ship).
