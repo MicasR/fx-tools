@@ -73,7 +73,19 @@ def seg_robust(r, nseg=6):
     return sum(1 for s in segs if s > 0), segs
 
 
-def promdate(df, budget=0.24, maxn=6, verbose=True):
+def _corr(a, b):
+    if not a.any() or not b.any():
+        return 0.0
+    sa, sb = a.std(), b.std()
+    if sa == 0 or sb == 0:
+        return 0.0
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def promdate(df, budget=0.24, maxn=6, max_corr=1.0, verbose=True):
+    """Greedy team build. max_corr < 1 = DIVERSITY GUARD: reject a dancer whose weekly
+    series correlates > max_corr with any member already on the team (kills near-twins
+    so the roster is genuinely decorrelated)."""
     Wm = W(df)
     n = len(df)
     sel, combined, cur = [], np.zeros(Wm.shape[1]), 1.0
@@ -82,6 +94,8 @@ def promdate(df, budget=0.24, maxn=6, verbose=True):
         for i in range(n):
             if i in sel:
                 continue
+            if max_corr < 1.0 and any(_corr(Wm[i], Wm[j]) > max_corr for j in sel):
+                continue                                  # too correlated with a member -> skip
             g, f = growth_at_dd(combined + Wm[i], budget)
             if g > best_g + 1e-9:
                 best_g, best_i, best_f = g, i, f
@@ -98,9 +112,10 @@ def promdate(df, budget=0.24, maxn=6, verbose=True):
     return sel, combined, cur
 
 
-def weight_optimize(df, sel, budget=0.24, rounds=40, step=0.25):
-    """Coordinate-ascent on per-member capital weights to maximize growth-at-matched-DD.
-    Starts equal-weight (each = 1 ops-account). Weights are relative capital allocations."""
+def weight_optimize(df, sel, budget=0.24, steps=(0.5, 0.25, 0.1, 0.05, 0.02)):
+    """Multi-resolution coordinate-ascent on per-member capital weights to maximize
+    growth-at-matched-DD. Starts equal-weight. Weights = relative capital allocations
+    (scale is free -- the compounding fraction f absorbs total size)."""
     Wm = W(df)
     mem = [Wm[i] for i in sel]
     w = np.ones(len(sel))
@@ -109,17 +124,18 @@ def weight_optimize(df, sel, budget=0.24, rounds=40, step=0.25):
         return growth_at_dd(sum(wi * mi for wi, mi in zip(w, mem)), budget)[0]
 
     best = obj(w)
-    for _ in range(rounds):
-        improved = False
-        for i in range(len(w)):
-            for d in (1 + step, 1 / (1 + step)):
-                w2 = w.copy(); w2[i] *= d
-                w2 = w2 / w2.mean()                      # keep scale ~1 (compounding handles total)
-                g = obj(w2)
-                if g > best + 1e-9:
-                    best, w, improved = g, w2, True
-        if not improved:
-            break
+    for step in steps:                              # coarse -> fine
+        for _ in range(60):
+            improved = False
+            for i in range(len(w)):
+                for d in (1 + step, 1 / (1 + step)):
+                    w2 = w.copy(); w2[i] *= d
+                    w2 = w2 / w2.mean()
+                    g = obj(w2)
+                    if g > best + 1e-9:
+                        best, w, improved = g, w2, True
+            if not improved:
+                break
     combined = sum(wi * mi for wi, mi in zip(w, mem))
     return w, combined, best
 
