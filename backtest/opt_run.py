@@ -45,7 +45,18 @@ LEGS = {
 # EA input name for each short knob key
 KNOB = {"sizing": "InpSizing", "smaP": "InpSmaP", "slowP": "InpSlowP", "mult": "InpMult",
         "step": "InpProgStep", "tpR": "InpTpR", "trailR": "InpTrailR", "half": "InpHalf",
-        "mtf": "InpMgmtTF", "stack": "InpStack"}
+        "mtf": "InpMgmtTF", "stack": "InpStack",
+        # FIDELITY §3.6-REDUX archetype + aggression knobs:
+        "addtrig": "InpAddTrigger", "lineplace": "InpLinePlace", "nback": "InpNBack",
+        "buffer": "InpLineBuffer"}
+
+# default for a knob absent from a LEGS entry (the §3.6-REDUX knobs default to the
+# pre-redux behaviour: SMA-bounce / margin-line / no buffer -> logic-preserving).
+DEFAULTS = {"half": 0.5, "addtrig": 0, "lineplace": 0, "nback": 0, "buffer": 0.0}
+
+# the full knob order rendered into [TesterInputs] (core 8 + the 4 redux knobs).
+KNOB_ORDER = ["sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half",
+              "addtrig", "lineplace", "nback", "buffer"]
 
 
 def _val(name, base, opt):
@@ -59,9 +70,7 @@ def _val(name, base, opt):
 def run_opt(tag, leg, opt=None, fixed=None, mode=1, timeout=3600):
     opt = dict(opt or {})
     L = dict(LEGS[leg]); L.update(fixed or {})
-    half = L.get("half", 0.5)
-    knobs = "\n".join(_val(k, L.get(k, half if k == "half" else None), opt)
-                      for k in ["sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"])
+    knobs = "\n".join(_val(k, L.get(k, DEFAULTS.get(k)), opt) for k in KNOB_ORDER)
     ini = f"""[Tester]
 Expert=CrossKing_EA\\CrossKing_EA.ex5
 Symbol={L['sym']}
@@ -123,9 +132,7 @@ def run_single(leg, fixed=None, timeout=900):
     import glob as _glob
     import datetime as _dt
     L = dict(LEGS[leg]); L.update(fixed or {})
-    half = L.get("half", 0.5)
-    knobs = "\n".join(f"{KNOB[k]}={L.get(k, half if k=='half' else 0)}"
-                      for k in ["sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"])
+    knobs = "\n".join(f"{KNOB[k]}={L.get(k, DEFAULTS.get(k, 0))}" for k in KNOB_ORDER)
     rpt = rf"{TERM}\MQL5\Files\CK_single_{leg}"
     ini = f"""[Tester]
 Expert=CrossKing_EA\\CrossKing_EA.ex5
@@ -182,8 +189,9 @@ InpHeartbeatSec=30
 
 
 def show(df, n=15):
-    cols = ["score", "nbpR", "segpos", "rf", "oneop", "ops", "win",
-            "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half"]
+    cols = ["score", "nbpR", "segpos", "rf", "oneop", "extop1R", "nmonster", "ops", "win",
+            "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half",
+            "addtrig", "lineplace", "nback", "buffer"]
     cols = [c for c in cols if c in df.columns]
     with pd.option_context("display.width", 200, "display.max_columns", 30):
         print(df[cols].head(n).to_string(index=False))

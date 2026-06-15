@@ -151,11 +151,17 @@ row (now carrying `extop1R`,`nmonster`,`addtrig`,`lineplace`,`nback`,`buffer`).
 
 **Aggression tier = (buffer × step × anchor) band** (the dial, not a free axis):
 
-| tier | `InpLineBuffer` (R) | `InpProgStep` | `InpSlowP` (geofloor) |
-|---|---|---|---|
-| aggressive   | 0.0       | 1.7, 2.0 | 150, 180 (tight = big lots) |
-| mild         | 0.25, 0.5 | 1.4, 1.5 | 210 |
-| conservative | 0.75, 1.0 | 1.1, 1.2 | 270, 330 |
+| tier | `InpLineBuffer` (R) | `InpProgStep` | `InpSlowP` (geofloor) | `InpTpR` |
+|---|---|---|---|---|
+| aggressive   | 0.0       | 1.7, 2.0 | 150, 180 (tight = big lots) | **1.0, 1.5, 2.0, 3.0** |
+| mild         | 0.25, 0.5 | 1.4, 1.5 | 210 | 2.0, 3.0 |
+| conservative | 0.75, 1.0 | 1.1, 1.2 | 270, 330 | 3.0 (or trail) |
+
+**TP × aggression interaction (user, 2026-06-15):** an aggressive stack pins huge lots against a
+close line → *fragile but explosive*. A high TP often never lands before the stack blows up; a
+**lower TP banks the monster lots while in profit**, converting −1R blow-ups into wins. So the
+aggressive band **sweeps `InpTpR` low** (1.0–2.0R) as well as 3R — TP height is part of the
+aggression search, not a fixed exit.
 
 **Archetype F — poscandle compounding:** `InpAddTrigger=ADD_POSCANDLE`,
 `InpSizing ∈ {CK_PROGGEO, CK_GEOFLOOR}`, `InpLinePlace ∈ {LINE_MARGIN, LINE_NBACK}`,
