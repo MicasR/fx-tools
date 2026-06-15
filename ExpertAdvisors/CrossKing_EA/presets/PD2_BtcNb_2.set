@@ -1,0 +1,29 @@
+; CrossKing PROM-DATE2 robust team (FIDELITY 3.6-REDUX) -- PD2_BtcNb_2
+; BTCUSDc chart H1, mgmt H1. Equal weight (1/6).
+; tester-true nbpR~32 segpos 4/6 extop1R 29. AGGRESSIVE STACKER -- path-sensitive +-10-36% run-to-run.
+InpLegName=PD2_BtcNb_2
+InpMagicNumber=30260613
+InpEntryTF=16385
+InpMgmtTF=16385
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=1
+InpSmaP=15
+InpSlowP=0
+InpMult=0.015
+InpProgStep=2.0
+InpHalf=0.5
+InpTpR=1.0
+InpTrailR=0.0
+InpAddTrigger=0
+InpLinePlace=1
+InpNBack=15
+InpLineBuffer=0.5
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

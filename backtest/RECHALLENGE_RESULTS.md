@@ -128,3 +128,17 @@ sma15/step1.2/tr2.5) + BTC nback15/buf0.5/step2.0/TP1.0 + BTC pinprev/buf0.4/sma
 → challenger wins the user's metric (chance of high returns) on every robustness measure.
 CAVEAT: boot-median ~12×, back-loaded → modest, regime-dependent forward edge.
 ▶ pending user confirm: crown challenger → PD2_*.set presets + finalist single-pass reproduce.
+
+## Phase 5 — FINALIST REPRODUCE + presets (crown confirmed by user)
+Single-pass reproduce of the 6 legs (`_finalist.py`):
+- **Quick-exit/trail legs reproduce near-exactly** (gold geofloor-TP3 +0%, BTC trails +1%/−6%).
+- **Aggressive deep-STACK legs are path-sensitive +10..+36%** (gold proggeo sma7 +36%, BTC nback +10%,
+  BTC pinprev +18%) — known sub-bar tick-ordering jitter on deep stacks. A real fidelity caveat for
+  the aggressive archetypes: exact contribution wobbles run-to-run even on the tester.
+- **Team reproduced: 24.2× raw (WITH monsters) / 10.8× robust (ex-top3wk) / retain 30% / boot-median
+  11.9× / p05 2.5×.** Monsters ≈ **×2.2** the growth (10.8→24.2) = the capped-downside aggression payoff.
+- Crown STANDS: even reproduced + softened, beats champion (44× raw but robust 4.8× / retain 6% / med 10.1).
+**Presets written: `presets/PD2_*.set`** (GoldGeo_0 proggeo sma7/step1.7/TP3, BtcTrail_1 geofloor
+sma15/slow270/tr2.5, BtcNb_2 nback15/buf0.5/step2.0/TP1, GoldGeo_3 geofloor sma9/slow300/TP3, BtcTrail_4
+proggeo sma15/step1.2/tr2.5, BtcPin_5 pinprev/buf0.4/sma13/TP1.5). `_finalist.py`, `_gen_presets.py`.
+**Deployment: back-loading + aggressive-leg path-jitter → size conservatively (f near bootstrap median, not raw).**

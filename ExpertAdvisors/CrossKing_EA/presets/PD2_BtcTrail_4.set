@@ -1,0 +1,29 @@
+; CrossKing PROM-DATE2 robust team (FIDELITY 3.6-REDUX) -- PD2_BtcTrail_4
+; BTCUSDc chart H1, mgmt H1. Equal weight (1/6).
+; tester-true nbpR~63 segpos 5/6 extop1R 51. trail leg.
+InpLegName=PD2_BtcTrail_4
+InpMagicNumber=30260615
+InpEntryTF=16385
+InpMgmtTF=16385
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=0
+InpSmaP=15
+InpSlowP=0
+InpMult=0.01
+InpProgStep=1.2
+InpHalf=0.3
+InpTpR=0.0
+InpTrailR=2.5
+InpAddTrigger=0
+InpLinePlace=0
+InpNBack=0
+InpLineBuffer=0.0
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30
