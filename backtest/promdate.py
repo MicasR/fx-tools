@@ -151,7 +151,8 @@ def _corr(a, b):
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def promdate(df, budget=0.24, maxn=6, max_corr=1.0, drop_top=3, objective="growth", verbose=True):
+def promdate(df, budget=0.24, maxn=6, max_corr=1.0, drop_top=3, objective="growth",
+             min_legs=1, verbose=True):
     """Greedy team build. SELECTION objective:
        "growth" = robust_growth (growth@DD after dropping the `drop_top` biggest weeks) — max
                   CHANCE of high returns, not a jackpot-inflatable in-sample peak.
@@ -163,7 +164,10 @@ def promdate(df, budget=0.24, maxn=6, max_corr=1.0, drop_top=3, objective="growt
     n = len(df)
     sel, combined, cur = [], np.zeros(Wm.shape[1]), (0.0 if objective == "rf" else 1.0)
     while len(sel) < maxn:
-        best_i, best_g, best_f = -1, cur, 0.0
+        # below min_legs: take the best available leg even if it lowers the objective
+        # (force operational diversification); at/above min_legs: only add if it improves.
+        floor = -1e18 if len(sel) < min_legs else cur
+        best_i, best_g, best_f = -1, floor, 0.0
         for i in range(n):
             if i in sel:
                 continue
