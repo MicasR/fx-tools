@@ -34,6 +34,7 @@ for mc in (1.0, 0.7):
     print(f"\n----- greedy (max_corr={mc}) -----")
     sel, combined, g = p.promdate(pool, budget=0.24, maxn=6, max_corr=mc)
     p.report(pool, sel, combined, budget=0.24)
+    p.print_robustness(combined, budget=0.24, drop=5)
     verdict = (f"NEW CROWN  +{100*(g/CHAMP-1):.0f}% vs champion" if g > CHAMP
                else f"champion holds ({g:.1f}x < {CHAMP}x)")
     print(f"  >>> growth@24%DD = {g:.1f}x   vs CHAMPION {CHAMP}x  ->  {verdict}")

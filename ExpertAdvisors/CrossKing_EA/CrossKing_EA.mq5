@@ -133,7 +133,7 @@ double   g_opR[];              // realized R per closed op, in order
 #define  CK_EPOCH   D'2024.02.26 00:00'
 #define  CK_WEEKSEC 604800
 #define  CK_NWEEK   130            // weeks 2024-02-26 .. ~2026-08 (covers the test window)
-#define  CK_NMETA   23             // leading metadata columns shipped before the weekly vector
+#define  CK_NMETA   26             // leading metadata columns shipped before the weekly vector
 #define  CK_MONSTER_R 5.0          // op R >= this counts as a "monster" (aggressive-gate diagnostic)
 double   g_week[CK_NWEEK];      // NBP-clamped R summed per calendar week
 
@@ -206,6 +206,35 @@ double OnTester()
       double s = 0.0; for(int i = a; i < b; i++) s += MathMax(g_opR[i], -1.0);
       if(s > 0) segpos++;
    }
+   // R2 (championship): segment-positive count after removing the 3 biggest WINNING ops.
+   // Admits aggressive legs (high oneop OK) but proves the edge isn't carried by <=3 trades.
+   int top3[3]; top3[0] = top3[1] = top3[2] = -1;
+   for(int t = 0; t < 3; t++)
+   {
+      double bv = -1e18; int bi = -1;
+      for(int i = 0; i < n; i++)
+      {
+         if(i == top3[0] || i == top3[1] || i == top3[2]) continue;
+         if(g_opR[i] > bv) { bv = g_opR[i]; bi = i; }
+      }
+      top3[t] = bi;
+   }
+   int segpos_ex3 = 0;
+   for(int k = 0; k < 6; k++)
+   {
+      int a = k * q, b = (k == 5) ? n : (k + 1) * q;
+      double s = 0.0;
+      for(int i = a; i < b; i++)
+      {
+         if(i == top3[0] || i == top3[1] || i == top3[2]) continue;   // drop the 3 biggest winners
+         s += MathMax(g_opR[i], -1.0);
+      }
+      if(s > 0) segpos_ex3++;
+   }
+   // R3 (championship): anti-recency -- totR in the first vs second half of the window.
+   int hmid = n / 2; double h1R = 0.0, h2R = 0.0;
+   for(int i = 0; i < n; i++)
+   { double r = MathMax(g_opR[i], -1.0); if(i < hmid) h1R += r; else h2R += r; }
    int wins = 0; for(int i = 0; i < n; i++) if(g_opR[i] > 0) wins++;
    double win   = 100.0 * wins / n;
    double rf    = (dd > 0) ? nbpR / dd : 0.0;
@@ -223,6 +252,7 @@ double OnTester()
    data[14] = InpHalf; data[15] = (double)InpMgmtTF; data[16] = InpStack ? 1.0 : 0.0;
    data[17] = extop1R; data[18] = (double)nmonster; data[19] = (double)InpAddTrigger;
    data[20] = (double)InpLinePlace; data[21] = (double)InpNBack; data[22] = InpLineBuffer;
+   data[23] = (double)segpos_ex3; data[24] = h1R; data[25] = h2R;
    for(int w = 0; w < CK_NWEEK; w++) data[CK_NMETA + w] = g_week[w];
    FrameAdd("ck", 0, score, data);
    return score;
@@ -242,7 +272,8 @@ int OnTesterInit()
    {
       string hdr = "pass,score,nbpR,segpos,rf,oneop,ops,win,"
                    "sizing,smaP,slowP,mult,step,tpR,trailR,half,mgmtTF,stack,"
-                   "extop1R,nmonster,addtrig,lineplace,nback,buffer";
+                   "extop1R,nmonster,addtrig,lineplace,nback,buffer,"
+                   "segpos_ex3,h1R,h2R";
       for(int w = 0; w < CK_NWEEK; w++) hdr += ",w" + IntegerToString(w);
       FileWrite(g_opt_fh, hdr);
    }
@@ -256,11 +287,12 @@ void OnTesterPass()
    {
       if(g_opt_fh == INVALID_HANDLE || ArraySize(data) < CK_NMETA + CK_NWEEK) continue;
       string row = StringFormat("%d,%.4f,%.4f,%d,%.4f,%.2f,%d,%.4f,%d,%d,%d,%.5f,%.3f,%.3f,%.3f,%.3f,%d,%d,"
-                   "%.4f,%d,%d,%d,%d,%.3f",
+                   "%.4f,%d,%d,%d,%d,%.3f,%d,%.4f,%.4f",
                    (long)pass, data[0], data[1], (int)data[2], data[3], data[4], (int)data[5], data[6],
                    (int)data[7], (int)data[8], (int)data[9], data[10], data[11], data[12], data[13],
                    data[14], (int)data[15], (int)data[16],
-                   data[17], (int)data[18], (int)data[19], (int)data[20], (int)data[21], data[22]);
+                   data[17], (int)data[18], (int)data[19], (int)data[20], (int)data[21], data[22],
+                   (int)data[23], data[24], data[25]);
       for(int w = 0; w < CK_NWEEK; w++) row += "," + DoubleToString(data[CK_NMETA + w], 3);
       FileWrite(g_opt_fh, row);
    }

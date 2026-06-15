@@ -240,13 +240,20 @@ team selector (`backtest/promdate.py`).
   MQL5-Cloud agents) to `MQL5/Files/ck_opt.csv`. Harness: `backtest/opt_run.py`,
   `pool_gen.py`/`pool_dense.py`, `promdate.py`. Runs on the **MetaQuotes** terminal
   (Exness account + cloud agents), NOT the EXNESS terminal.
-- **`ck_opt.csv` columns** (`CK_NMETA`=23 leading + `w0..w129` weekly): `pass, score, nbpR,
+- **`ck_opt.csv` columns** (`CK_NMETA`=26 leading + `w0..w129` weekly): `pass, score, nbpR,
   segpos, rf, oneop, ops, win, sizing, smaP, slowP, mult, step, tpR, trailR, half, mgmtTF,
-  stack,` **`extop1R, nmonster, addtrig, lineplace, nback, buffer`**. The last block (added
-  FIDELITY §3.6-REDUX): `extop1R` = totR ex the single best op and `nmonster` = #ops ≥
-  `CK_MONSTER_R`(5R) drive the **aggressive-strategy gate** (recurrence-not-luck), and
-  `addtrig/lineplace/nback/buffer` identify the archetype + aggression tier of each candidate
-  (see `RECHALLENGE_PLAN.md` §4.5/§5).
+  stack,` `extop1R, nmonster, addtrig, lineplace, nback, buffer,` **`segpos_ex3, h1R, h2R`**.
+  `addtrig/lineplace/nback/buffer` identify the archetype + aggression tier;
+  `extop1R`/`nmonster` are aggressive diagnostics.
+- **CHAMPIONSHIP QUALIFICATION (user, 2026-06-15 — Option B: aggression ADMITTED, no oneop cap;
+  the capped −1R downside makes high-compound aggression a bounded-cost asymmetric bet that must
+  compete):** a candidate qualifies iff
+  - **R1** `segpos ≥ 4` (≥4/6 segments positive);
+  - **R2** `segpos_ex3 ≥ 4` — still ≥4/6 positive **after removing the 3 biggest winning ops**
+    (low single-trade dependency; the principled replacement for the oneop cut);
+  - **R3** `h1R > 0 AND h2R > 0` — positive in **both halves** of the window (anti-recency).
+  Team-level backstop: `promdate.team_robustness` (growth@DD after dropping the biggest weeks +
+  a bootstrap-over-weeks). See `RECHALLENGE_PLAN.md` + `backtest/RECHALLENGE_RESULTS.md`.
 
 ## 9. PROM-DATE 3-dancer team (LOCKED 2026-06-15 — replaces the oracle kings)
 Tester-true (NBP, $1000, growth@24%DD = **57.5×**, PF 1.49, RF 25.1, 6/6, win 34%,

@@ -37,6 +37,21 @@ sizing rule, margin-line placement, TP vs trail, favourable gate, concurrency, w
 
 ---
 
+## 1b. CHAMPIONSHIP QUALIFICATION (user, 2026-06-15 — Option B)
+
+**Thesis (user):** high-compound trades whose downside is **capped at −1R** by NBP can yield
+phenomenal results *if they recur often enough*. The research question = *what system of EAs gives
+the highest chance of truly high returns at reasonable DD?* → **the most aggressive techniques MUST
+compete** (no `oneop` cap). A leg/preset qualifies for the championship iff:
+- **R1 Robustness:** `segpos ≥ 4` (≥4/6 segments positive).
+- **R2 Low single-trade dependency:** still `≥4/6` positive **after removing the 3 biggest winning
+  ops** (`segpos_ex3 ≥ 4`). Principled replacement for the oneop cut — admits aggression, rejects
+  edges carried by ≤3 trades.
+- **R3 Anti-recency (added):** positive in **both halves** of the window (`h1R>0 & h2R>0`) — guards
+  the known back-loading/recent-regime deployment risk; closest in-sample proxy for out-of-sample.
+- **Team backstop:** `team_robustness` — growth@DD must survive dropping the biggest weeks +
+  bootstrap-over-weeks (the team can't hinge on a few lucky weeks; team analogue of R2).
+
 ## 2. Ground rules (inherited — non-negotiable)
 
 1. **Tester-true only.** NBP-clamped Model-1 MT5 tester via `backtest/tester_truth.py`. No

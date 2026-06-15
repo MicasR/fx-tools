@@ -26,9 +26,9 @@ META = ["leg", "sym", "nbpR", "segpos", "rf", "oneop", "extop1R", "nmonster", "o
         "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half",
         "addtrig", "lineplace", "nback", "buffer"]
 
-# §3.6-REDUX archetype/aggression knobs (absent from pre-redux pools -> filled on load).
+# §3.6-REDUX archetype/aggression knobs + championship metrics (filled if absent).
 REDUX_COLS = {"extop1R": np.nan, "nmonster": 0, "addtrig": 0, "lineplace": 0,
-              "nback": 0, "buffer": 0.0}
+              "nback": 0, "buffer": 0.0, "segpos_ex3": np.nan, "h1R": np.nan, "h2R": np.nan}
 
 
 def arch_tag(row):
@@ -39,17 +39,18 @@ def arch_tag(row):
 
 
 def load_pool(patterns=("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc_*.csv"),
-              min_ops=30, min_nbpR=5.0, max_oneop=50.0, min_extop=0.0):
-    """Union of the incumbent pool + the §3.6-REDUX archetype sweeps.
-    JACKPOT FILTER (TWO guards, both required):
-      (1) `oneop <= max_oneop` -- the PRIMARY guard (proven essential): caps how much a
-          SINGLE op can dominate the leg. A 1op=87% leg (e.g. the GoldS210 ~880R pin-stack)
-          is a curve-fit mega-trade whose realized-R weekly vector also hides its building
-          float-DD -> reads falsely DD-free -> fake growth. extop1R does NOT catch this
-          (removing just the top op still leaves the other monsters), so the oneop cap stays.
-      (2) `extop1R >= min_extop` -- SECONDARY: profitable even without the single best op
-          (kills pure one-op wonders). Together they admit genuine aggressive edges =
-          MANY moderate monsters (oneop low, extop1R high), reject one-giant-op jackpots."""
+              min_ops=30, min_nbpR=5.0, min_segpos=4, min_segpos_ex3=4, require_both_halves=True):
+    """Union of the incumbent pool + the §3.6-REDUX archetype sweeps, filtered to the
+    CHAMPIONSHIP QUALIFICATION (user, 2026-06-15 — Option B: aggression is ADMITTED, no
+    oneop cap; the most aggressive techniques must compete):
+      R0  ops >= min_ops, nbpR >= min_nbpR        (sample size + net-positive)
+      R1  segpos >= 4                             (robustness: >=4/6 segments positive)
+      R2  segpos_ex3 >= 4                          (low single-trade dependency: still >=4/6
+                                                    positive after removing the 3 biggest wins)
+      R3  h1R > 0 AND h2R > 0                       (anti-recency: positive in BOTH window halves)
+    The capped -1R downside makes high-compound aggression a bounded-cost asymmetric bet; R2
+    replaces the blunt oneop cut as the principled single-trade-dependency guard. Legacy CSVs
+    lacking a metric skip that rule (NaN -> pass) — re-sweep on the current EA populates all."""
     files = [f for p in patterns for f in glob.glob(p)]
     if not files:
         raise FileNotFoundError(patterns)
@@ -57,9 +58,11 @@ def load_pool(patterns=("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc
     for c, default in REDUX_COLS.items():
         if c not in df.columns:
             df[c] = default
-    extop_ok = df["extop1R"].isna() | (df["extop1R"] >= min_extop)   # NaN (legacy) -> rely on oneop
+    r2 = df["segpos_ex3"].isna() | (df["segpos_ex3"] >= min_segpos_ex3)
+    r3 = (~require_both_halves) | (df["h1R"].isna() | (df["h2R"].isna()) |
+                                   ((df["h1R"] > 0) & (df["h2R"] > 0)))
     df = df[(df["ops"] >= min_ops) & (df["nbpR"] >= min_nbpR) &
-            (df["oneop"] <= max_oneop) & extop_ok].copy()
+            (df["segpos"] >= min_segpos) & r2 & r3].copy()
     # drop exact duplicate strategies (same leg + full param signature) keeping best score
     keyc = ["leg", "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half",
             "addtrig", "lineplace", "nback", "buffer"]
@@ -182,6 +185,36 @@ def report(df, sel, combined, budget=0.24):
               f"seg={int(row['segpos'])}/6 extop1R={row['extop1R']:6.1f} nmon={int(row['nmonster'])} "
               f"1op={row['oneop']:.0f}%")
     return g, f
+
+
+def team_robustness(combined, budget=0.24, drop=5, nboot=1000, seed=0):
+    """Team-level backstop (analogue of leg-rule R2): the team's growth@DD must not hinge on
+    a handful of monster WEEKS. Reports:
+      - g_ex_top / retain : growth@DD after zeroing the `drop` biggest weeks (vs base)
+      - team segpos + both-halves (R1/R3 at team level)
+      - bootstrap: resample weeks with replacement -> median & 5th-pct growth@DD
+        (P05 = a conservative 'bad-luck' growth; tests dependence on which weeks landed)."""
+    base = growth_at_dd(combined, budget)[0]
+    c2 = combined.copy()
+    c2[np.argsort(c2)[-drop:]] = 0.0
+    g_ex = growth_at_dd(c2, budget)[0]
+    segp, _ = seg_robust(combined)
+    h = len(combined) // 2
+    rng = np.random.default_rng(seed)
+    n = len(combined)
+    gs = np.array([growth_at_dd(combined[rng.integers(0, n, n)], budget)[0] for _ in range(nboot)])
+    return dict(base=base, g_ex_top=g_ex, retain=(g_ex / base if base > 0 else 0.0),
+                segpos=segp, h1=float(combined[:h].sum()), h2=float(combined[h:].sum()),
+                boot_median=float(np.median(gs)), boot_p05=float(np.percentile(gs, 5)))
+
+
+def print_robustness(combined, budget=0.24, drop=5):
+    r = team_robustness(combined, budget, drop)
+    print(f"\n  --- team robustness backstop ---")
+    print(f"  growth@DD base={r['base']:.1f}x  ex-top{drop}-weeks={r['g_ex_top']:.1f}x "
+          f"(retain {100*r['retain']:.0f}%)  teamSeg={r['segpos']}/6  h1={r['h1']:+.0f} h2={r['h2']:+.0f}")
+    print(f"  bootstrap-over-weeks: median={r['boot_median']:.1f}x  p05(bad-luck)={r['boot_p05']:.1f}x")
+    return r
 
 
 def compare_instruments(pool, budget=0.24, maxn=6):
