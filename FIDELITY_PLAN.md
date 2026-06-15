@@ -190,8 +190,9 @@ spend effort fixing the wrong thing. BtcGF (native H1, same geofloor code) keeps
   pin-jackpots); weights are a fine-tune (equal weight = standard, anti-curve-fit). **CROWNED =
   3-dancer (BtcGF-trail + GoldShield-TP + BtcPG, equal): $1000→$57,459 @24%DD, PF 1.49, RF 25.1,
   6/6 — ~3× the old cross-king's REAL number (19.2×; oracle's 128.8× was inflated ~6.7×).** Presets
-  `ExpertAdvisors/CrossKing_EA/presets/PD_*.set`. **OPEN: gold-compound absent (user sad — it's the
-  beloved geo-stack); a gold-inclusive team = 30× (still > old king), −48% vs BTC-led; revisit.**
+  `ExpertAdvisors/CrossKing_EA/presets/PD_*.set`. **Gold-compound RULED OUT on sentiment (user):
+  it costs −48% (gold-inclusive 30×); gold enters only on merit — a variant that does NOT lower
+  growth-at-DD. Crown stays BTC-led 57.5×. See [[feedback-decide-on-merit-not-sentiment]].**
   Detail in [[project-promdate-kings]] + `backtest/FIDELITY_FINDINGS.md`. **▶ NEXT = §3.7 deploy
   (OPTION B: orchestrator straight away, `SYSTEM_PLAN.md`).** Fidelity arc COMPLETE.
 - **M1 ROUTE (superseded by Path A) — fell short of <5%; (2026-06-14).** Full-window M1 extracted

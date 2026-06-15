@@ -1,5 +1,9 @@
 """What does insisting on a GOLD-COMPOUND dancer cost? Seed the team with the best gold
-stacker (GoldS210/GoldGeo17 = geofloor/proggeo) then greedy-add, vs the free 3-dancer."""
+stacker (GoldS210/GoldGeo17 = geofloor/proggeo) then greedy-add, vs the free 3-dancer.
+
+RESULT (2026-06-15): gold-seeded = 30x vs BTC-led 57.5x = -48%. User RULED OUT including
+gold on sentiment ("on its own merits or not at all"). Crown stays BTC-led. The only gold
+path is a variant that DOESN'T lower growth-at-DD. Don't re-pitch a sentiment trade."""
 import numpy as np
 import promdate as P
 
