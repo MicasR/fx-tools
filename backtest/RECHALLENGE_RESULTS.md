@@ -142,3 +142,21 @@ Single-pass reproduce of the 6 legs (`_finalist.py`):
 sma15/slow270/tr2.5, BtcNb_2 nback15/buf0.5/step2.0/TP1, GoldGeo_3 geofloor sma9/slow300/TP3, BtcTrail_4
 proggeo sma15/step1.2/tr2.5, BtcPin_5 pinprev/buf0.4/sma13/TP1.5). `_finalist.py`, `_gen_presets.py`.
 **Deployment: back-loading + aggressive-leg path-jitter → size conservatively (f near bootstrap median, not raw).**
+
+## Phase 6 — RECOVERY-FACTOR objective (user: "too much DD; look at RF first")
+Added `objective="rf"` to `promdate` (greedy maximizes team RF = totR/maxDD, ex-top3wk so not
+jackpot-inflatable). RF-first surfaces a DIFFERENT, drawdown-efficient team:
+| | GROWTH obj (4 legs) | RF obj (2 legs) |
+|---|---|---|
+| roster | BTC-trail + 2 gold compounders + BTC-nback | **BTC-trail(sma15/270/tr2.5) + gold geofloor(sma7/step1.7/TP3)** |
+| RF raw | 14.2 | **16.0** |
+| $1000 @ f=1% | $18,366 @ 21.7% DD | $5,941 @ **12.2% DD** |
+| $1000 @ 24%DD | $24,490 | **$23,391** (f=1.9%) |
+| half-split h1/h2 | 124/209 (back-loaded) | **96/102 (balanced!)** |
+| boot-median | 12.2x | 9.6x |
+**RF-first = HALF the DD at fixed f AND not back-loaded (kills the recency risk), for ~the same
+growth at matched DD.** Aggressive archetypes (nback/pinprev) DROP OUT under RF (they add return but
+DD). Clean split: RF lens -> simple low-DD balanced DEPLOY team; growth lens -> max return, more DD.
+For "high return at REASONABLE DD" the RF 2-leg team wins. Graphs: `out/pd2_equity.png`,
+`out/pd2_rf_vs_growth.png`. Tooling: `_rf_compare.py`, `_rf_plot.py`. ▶ pending: choose crown
+(RF-2leg vs growth vs a 3-4-leg RF-constrained blend) → presets + deploy.

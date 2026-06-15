@@ -124,6 +124,18 @@ def robust_growth(r, budget=0.24, drop_top=3):
     return growth_at_dd(r2, budget)
 
 
+def team_rf(r, drop_top=3):
+    """Recovery factor (totR / maxDD) of the weekly R series, AFTER zeroing the top-`drop_top`
+    weeks (RF is also jackpot-inflatable: a monster week lifts totR with zero DD cost). RF is
+    scale-invariant (f cancels) -> ranks DRAWDOWN EFFICIENCY, not size. Returns (rf, 0.0)."""
+    r2 = r.copy()
+    if drop_top > 0:
+        r2[np.argsort(r2)[-drop_top:]] = 0.0
+    cum = np.cumsum(r2)
+    dd = (np.maximum.accumulate(cum) - cum).max()
+    return (cum[-1] / dd if dd > 1e-9 else 0.0), 0.0
+
+
 def seg_robust(r, nseg=6):
     q = len(r) // nseg
     segs = [r[k * q:(len(r) if k == nseg - 1 else (k + 1) * q)].sum() for k in range(nseg)]
@@ -139,15 +151,17 @@ def _corr(a, b):
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def promdate(df, budget=0.24, maxn=6, max_corr=1.0, drop_top=3, verbose=True):
-    """Greedy team build. SELECTION objective = robust_growth (growth@DD after dropping the
-    `drop_top` biggest weeks) so the greedy maximizes the CHANCE of high returns, not a
-    jackpot-inflatable in-sample peak (drop_top=0 -> raw growth). max_corr < 1 = DIVERSITY
-    GUARD: reject a dancer whose weekly series correlates > max_corr with a member (kills
-    near-twins). `cur` tracks the robust objective; raw growth is reported separately."""
+def promdate(df, budget=0.24, maxn=6, max_corr=1.0, drop_top=3, objective="growth", verbose=True):
+    """Greedy team build. SELECTION objective:
+       "growth" = robust_growth (growth@DD after dropping the `drop_top` biggest weeks) — max
+                  CHANCE of high returns, not a jackpot-inflatable in-sample peak.
+       "rf"     = team_rf (recovery factor, ex-top-`drop_top` weeks) — DRAWDOWN EFFICIENCY first;
+                  surfaces lower-DD teams whose legs cover each other's bad stretches.
+    max_corr < 1 = DIVERSITY GUARD (reject a dancer correlating > max_corr with a member)."""
+    obj = team_rf if objective == "rf" else (lambda r, *_: robust_growth(r, budget, drop_top))
     Wm = W(df)
     n = len(df)
-    sel, combined, cur = [], np.zeros(Wm.shape[1]), 1.0
+    sel, combined, cur = [], np.zeros(Wm.shape[1]), (0.0 if objective == "rf" else 1.0)
     while len(sel) < maxn:
         best_i, best_g, best_f = -1, cur, 0.0
         for i in range(n):
@@ -155,7 +169,7 @@ def promdate(df, budget=0.24, maxn=6, max_corr=1.0, drop_top=3, verbose=True):
                 continue
             if max_corr < 1.0 and any(_corr(Wm[i], Wm[j]) > max_corr for j in sel):
                 continue                                  # too correlated with a member -> skip
-            g, f = robust_growth(combined + Wm[i], budget, drop_top)
+            g, f = obj(combined + Wm[i], drop_top)
             if g > best_g + 1e-9:
                 best_g, best_i, best_f = g, i, f
         if best_i < 0:
