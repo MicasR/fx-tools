@@ -96,6 +96,19 @@ def growth_at_dd(r, budget=0.24, fmax=10.0, iters=64):
     return (mult if dd <= budget * 1.001 else 1.0), lo
 
 
+def robust_growth(r, budget=0.24, drop_top=3):
+    """Growth@DD after ZEROING the `drop_top` biggest weeks of the series. This is the
+    SELECTION objective (not raw growth): it answers 'high CHANCE of high returns' rather
+    than the in-sample peak. A genuine recurring-aggression edge retains most of its growth
+    when its best few weeks are stripped; a float-DD-blind mega-stack jackpot (e.g. one
+    +881R gold op) collapses -> the greedy won't reach for it. Returns (mult, f)."""
+    if drop_top <= 0:
+        return growth_at_dd(r, budget)
+    r2 = r.copy()
+    r2[np.argsort(r2)[-drop_top:]] = 0.0
+    return growth_at_dd(r2, budget)
+
+
 def seg_robust(r, nseg=6):
     q = len(r) // nseg
     segs = [r[k * q:(len(r) if k == nseg - 1 else (k + 1) * q)].sum() for k in range(nseg)]
@@ -111,10 +124,12 @@ def _corr(a, b):
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def promdate(df, budget=0.24, maxn=6, max_corr=1.0, verbose=True):
-    """Greedy team build. max_corr < 1 = DIVERSITY GUARD: reject a dancer whose weekly
-    series correlates > max_corr with any member already on the team (kills near-twins
-    so the roster is genuinely decorrelated)."""
+def promdate(df, budget=0.24, maxn=6, max_corr=1.0, drop_top=3, verbose=True):
+    """Greedy team build. SELECTION objective = robust_growth (growth@DD after dropping the
+    `drop_top` biggest weeks) so the greedy maximizes the CHANCE of high returns, not a
+    jackpot-inflatable in-sample peak (drop_top=0 -> raw growth). max_corr < 1 = DIVERSITY
+    GUARD: reject a dancer whose weekly series correlates > max_corr with a member (kills
+    near-twins). `cur` tracks the robust objective; raw growth is reported separately."""
     Wm = W(df)
     n = len(df)
     sel, combined, cur = [], np.zeros(Wm.shape[1]), 1.0
@@ -125,7 +140,7 @@ def promdate(df, budget=0.24, maxn=6, max_corr=1.0, verbose=True):
                 continue
             if max_corr < 1.0 and any(_corr(Wm[i], Wm[j]) > max_corr for j in sel):
                 continue                                  # too correlated with a member -> skip
-            g, f = growth_at_dd(combined + Wm[i], budget)
+            g, f = robust_growth(combined + Wm[i], budget, drop_top)
             if g > best_g + 1e-9:
                 best_g, best_i, best_f = g, i, f
         if best_i < 0:
@@ -137,7 +152,7 @@ def promdate(df, budget=0.24, maxn=6, max_corr=1.0, verbose=True):
             print(f"  +{len(sel)}: {row['sym'][:3]} {arch_tag(row):<10} sma{int(row['smaP'])} "
                   f"slow{int(row['slowP'])} step{row['step']:.2f} tp{row['tpR']:.2f} tr{row['trailR']:.2f} "
                   f"half{row['half']:.1f} | legNbpR={row['nbpR']:6.1f} legSeg={int(row['segpos'])}/6 "
-                  f"extop1R={row['extop1R']:6.1f} | TEAM growth@{int(budget*100)}%DD={best_g:6.2f}x "
+                  f"extop1R={row['extop1R']:6.1f} | TEAM robustG@{int(budget*100)}%DD={best_g:6.2f}x "
                   f"f={best_f:.3f} teamSeg={segp}/6")
     return sel, combined, cur
 

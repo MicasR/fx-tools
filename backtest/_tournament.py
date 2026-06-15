@@ -32,9 +32,11 @@ print("survivors by trigger/line:",
 
 for mc in (1.0, 0.7):
     print(f"\n----- greedy (max_corr={mc}) -----")
-    sel, combined, g = p.promdate(pool, budget=0.24, maxn=6, max_corr=mc)
+    sel, combined, g_rob = p.promdate(pool, budget=0.24, maxn=6, max_corr=mc, drop_top=3)
+    g_raw = p.growth_at_dd(combined, 0.24)[0]
     p.report(pool, sel, combined, budget=0.24)
     p.print_robustness(combined, budget=0.24, drop=5)
-    verdict = (f"NEW CROWN  +{100*(g/CHAMP-1):.0f}% vs champion" if g > CHAMP
-               else f"champion holds ({g:.1f}x < {CHAMP}x)")
-    print(f"  >>> growth@24%DD = {g:.1f}x   vs CHAMPION {CHAMP}x  ->  {verdict}")
+    verdict = (f"NEW CROWN  +{100*(g_raw/CHAMP-1):.0f}% vs champion" if g_raw > CHAMP
+               else f"champion holds ({g_raw:.1f}x < {CHAMP}x)")
+    print(f"  >>> raw growth@24%DD = {g_raw:.1f}x  (robust/ex-top3 = {g_rob:.1f}x, the selection "
+          f"objective)  vs CHAMPION {CHAMP}x  ->  {verdict}")

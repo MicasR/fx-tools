@@ -92,3 +92,26 @@ incumbent cands) vs the champion's DENSE pool (1075). Incumbent side is under-sa
 strength + densify the live archetype corners (gold nback low-TP, BTC nback/pinprev), re-run union.
 +14% archetype lift suggests a densified union clears 57.5×, but must be RUN not extrapolated.
 Then Phase 4.5 finalist bootstrap-over-monsters before any re-crown.**
+
+## Phase 4 — DEFINITIVE VERDICT (championship-density pool, R1-R3, robust objective)
+**Selection objective fixed:** raw growth@DD is jackpot-inflatable (float-DD-blind mega-stacks) — even
+under R1/R2/R3 the greedy grabbed the GoldS210 1op-87% leg → fake 934× (ex-top5 retain **1%**). So the
+greedy now maximizes **robust growth = growth@DD after dropping the top-3 weeks** (`promdate.robust_growth`,
+`drop_top=3`) = "high CHANCE of high returns", not an in-sample peak. This is the thesis operationalized.
+
+**Same-engine, same-lens comparison (max_corr=0.7):**
+| metric | Champion (current crown) | Challenger (robust-selected) |
+|---|---|---|
+| raw growth@24%DD | 44.0× | 35.9× |
+| **robust (ex-top3-wk)** | **4.8×** | **14.3×** |
+| ex-top5-wk retention | 6% | 24% |
+| bootstrap median / p05 | 10.1× / 1.8× | 9.8× / 2.5× |
+| back-loading h2/h1 | 3.5× | 1.8× |
+
+**VERDICT: the current crown is FRAGILE** — 94% of its growth is in 5 weeks; it's a back-loaded in-sample
+peak (vindicates the user's "king won't stand"). The **robust-selected team is ~3× more dependable**
+(robust 14.3× vs 4.8×) and more diversified: 2 real GOLD geofloor compounders (crown had only a gold
+shield) + BTC trail + 2 NEW archetypes (BTC nback15/buf0.5, BTC pinprev). Cost: lower raw peak (36 vs 44).
+**Caveat:** neither is bulletproof — both bootstrap to ~10× median; both still lean on the back half.
+Forward expectations « headline raw. ▶ NEXT: finalist single-pass reproduce + decide crown (robust team)
+vs further densify the archetype low-TP corners; mind the back-loading for live sizing.
