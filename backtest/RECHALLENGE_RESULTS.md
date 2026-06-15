@@ -69,3 +69,26 @@ compounding fraction → modest growth despite nbpR up to 333. **High nbpR ≠ h
 any dethroning must come from **complementarity** with the SMOOTH incumbent legs (do they smooth
 bad segments enough to lift f?). Decisive test = the FULL-UNION tournament (needs `pool_gen`).
 Jackpot filter works: TP3 one-monster gold rows (extop1R −145) correctly excluded.
+
+## Phase 3 FULL UNION — verdict so far (champion 57.5×)
+**Gate correction (important):** first union run hit **934×** — a MIRAGE = the GoldS210 pin-jackpot
+(nbpR 1012, **1op 87%**) the prior work already flagged. My extop1R-only gate let it back in
+(removing just the top op still leaves other monsters). **Restored `oneop ≤ 50` as the PRIMARY
+jackpot guard + extop1R secondary.** (oneop caps single-op dominance + guards the float-DD the
+weekly realized-R can't see.)
+
+**Controlled comparison (same current engine, same gate, diversity-guarded max_corr=0.7):**
+| pool | growth@24%DD |
+|---|---|
+| incumbent only (control) | **48.4×** |
+| full union (+ archetypes) | **55.1×** |
+→ **new archetypes ADD +14%** at matched DD. Seats won by new archetypes: **XAU nback5/TP1.0**
+(the gold COMPOUNDER the crown lacked — win 41%, extop1R +72, 1op 39%), **BTC nback5/buf0.5**,
+**BTC pinprev**. (max_corr=1.0 gives 69.5× but seats correlated BTC-trail twins = false diversification.)
+
+**Caveat:** incumbent-only = 48.4× < champion 57.5× because this is the COARSE `pool_gen` (~230
+incumbent cands) vs the champion's DENSE pool (1075). Incumbent side is under-sampled.
+**▶ NEXT (definitive crown test): densify the incumbent pool (`pool_dense`) back to championship
+strength + densify the live archetype corners (gold nback low-TP, BTC nback/pinprev), re-run union.
++14% archetype lift suggests a densified union clears 57.5×, but must be RUN not extrapolated.
+Then Phase 4.5 finalist bootstrap-over-monsters before any re-crown.**

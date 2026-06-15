@@ -9,9 +9,13 @@ import promdate as p
 
 CHAMP = 57.5   # current crowned 3-dancer growth@24%DD (FIDELITY §3.6, same tooling)
 
-if len(sys.argv) > 1 and sys.argv[1] == "archonly":
+mode = sys.argv[1] if len(sys.argv) > 1 else "union"
+if mode == "archonly":
     patterns = ("out/opt/gold_*.csv", "out/opt/btc_*.csv")
     label = "NEW ARCHETYPES ONLY (preview)"
+elif mode == "incumbent":
+    patterns = ("out/opt/pool_*.csv",)
+    label = "INCUMBENT POOL ONLY (control: same engine, no new archetypes)"
 else:
     patterns = ("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc_*.csv")
     label = "FULL UNION (incumbent + new archetypes)"

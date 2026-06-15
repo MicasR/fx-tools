@@ -39,13 +39,17 @@ def arch_tag(row):
 
 
 def load_pool(patterns=("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc_*.csv"),
-              min_ops=30, min_nbpR=5.0, min_extop=0.0):
+              min_ops=30, min_nbpR=5.0, max_oneop=50.0, min_extop=0.0):
     """Union of the incumbent pool + the §3.6-REDUX archetype sweeps.
-    JACKPOT FILTER (replaces the blunt oneop cut): keep a candidate only if its totR
-    EX the single best op (`extop1R`) is >= min_extop -- i.e. it stays profitable without
-    its luckiest stack. This kills one-monster pin-jackpots while KEEPING genuine
-    recurring aggressive edges (high nbpR AND high extop1R) and smooth incumbents. Older
-    pools lacking extop1R fall back to the legacy oneop<=50 cut."""
+    JACKPOT FILTER (TWO guards, both required):
+      (1) `oneop <= max_oneop` -- the PRIMARY guard (proven essential): caps how much a
+          SINGLE op can dominate the leg. A 1op=87% leg (e.g. the GoldS210 ~880R pin-stack)
+          is a curve-fit mega-trade whose realized-R weekly vector also hides its building
+          float-DD -> reads falsely DD-free -> fake growth. extop1R does NOT catch this
+          (removing just the top op still leaves the other monsters), so the oneop cap stays.
+      (2) `extop1R >= min_extop` -- SECONDARY: profitable even without the single best op
+          (kills pure one-op wonders). Together they admit genuine aggressive edges =
+          MANY moderate monsters (oneop low, extop1R high), reject one-giant-op jackpots."""
     files = [f for p in patterns for f in glob.glob(p)]
     if not files:
         raise FileNotFoundError(patterns)
@@ -53,9 +57,9 @@ def load_pool(patterns=("out/opt/pool_*.csv", "out/opt/gold_*.csv", "out/opt/btc
     for c, default in REDUX_COLS.items():
         if c not in df.columns:
             df[c] = default
-    jackpot_ok = (df["extop1R"].notna() & (df["extop1R"] >= min_extop)) | \
-                 (df["extop1R"].isna() & (df["oneop"] <= 50.0))
-    df = df[(df["ops"] >= min_ops) & (df["nbpR"] >= min_nbpR) & jackpot_ok].copy()
+    extop_ok = df["extop1R"].isna() | (df["extop1R"] >= min_extop)   # NaN (legacy) -> rely on oneop
+    df = df[(df["ops"] >= min_ops) & (df["nbpR"] >= min_nbpR) &
+            (df["oneop"] <= max_oneop) & extop_ok].copy()
     # drop exact duplicate strategies (same leg + full param signature) keeping best score
     keyc = ["leg", "sizing", "smaP", "slowP", "mult", "step", "tpR", "trailR", "half",
             "addtrig", "lineplace", "nback", "buffer"]
