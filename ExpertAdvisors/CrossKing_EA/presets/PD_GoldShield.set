@@ -1,0 +1,25 @@
+; CrossKing PROM-DATE 3-dancer team -- GoldShield (XAU M15) shield: single position, no adds, TP2.0R
+; Equal weight (1/3 of pool). Attach to: XAUUSDc chart, H1 timeframe. mgmt TF = M15 via InpMgmtTF.
+; Tester-true: nbpR ~38, the smooth gold-shield complement (half irrelevant -- no adds).
+InpLegName=PD_GoldShield
+InpMagicNumber=30260602
+InpEntryTF=16385
+InpMgmtTF=15
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=false
+InpSizing=0
+InpSmaP=7
+InpSlowP=0
+InpMult=0.01
+InpProgStep=1.7
+InpHalf=0.3
+InpTpR=2.0
+InpTrailR=0.0
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

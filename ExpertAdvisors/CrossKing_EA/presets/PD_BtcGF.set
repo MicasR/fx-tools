@@ -1,0 +1,25 @@
+; CrossKing PROM-DATE 3-dancer team -- BtcGF (BTC H1) geofloor step1.1 / SMA18 / slow270 / TRAIL 2.5R (no TP)
+; Equal weight (1/3 of pool). Attach to: BTCUSDc chart, H1 timeframe. mgmt TF = H1 via InpMgmtTF.
+; Tester-true: nbpR ~217, the trend-trail edge of the team.
+InpLegName=PD_BtcGF
+InpMagicNumber=30260601
+InpEntryTF=16385
+InpMgmtTF=16385
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=1
+InpSmaP=18
+InpSlowP=270
+InpMult=0.015
+InpProgStep=1.1
+InpHalf=0.5
+InpTpR=0.0
+InpTrailR=2.5
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

@@ -1,0 +1,25 @@
+; CrossKing PROM-DATE 3-dancer team -- BtcPG (BTC H1) proggeo step1.5 / SMA12 / TP2.0R
+; Equal weight (1/3 of pool). Attach to: BTCUSDc chart, H1 timeframe. mgmt TF = H1 via InpMgmtTF.
+; Tester-true: nbpR ~38, the BTC proggeo complement (fills weeks the trailer/shield miss).
+InpLegName=PD_BtcPG
+InpMagicNumber=30260603
+InpEntryTF=16385
+InpMgmtTF=16385
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpBreakBars=4
+InpStack=true
+InpSizing=0
+InpSmaP=12
+InpSlowP=0
+InpMult=0.01
+InpProgStep=1.5
+InpHalf=0.3
+InpTpR=2.0
+InpTrailR=0.0
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

@@ -202,7 +202,37 @@ not drift.
 
 ---
 
+## 8. OnTester scoring + optimization frames (FIDELITY §3.6 king re-search)
+The EA self-scores so the MT5 optimizer can re-search the management knobs on the
+*trustworthy tester* (Path A), and ships each pass's data back for the "prom date"
+team selector (`backtest/promdate.py`).
+- **`OnTester()`** — NBP-clamps the op R-stream (`g_opR`, every op capped at −1R, the
+  live accounting), returns the **robustness-weighted score `nbpR × (positive-6-seg/6)`**
+  (criterion = Custom max). Rewards magnitude AND 6-segment robustness → surfaces durable
+  kings, not 1-op pin-jackpots.
+- **Weekly performance vector** — `g_week[CK_NWEEK]` accumulates NBP-clamped R into
+  calendar weeks (epoch 2024-02-26) = the common clock to align different EAs by time
+  (op index can't align across EAs). The "prom date" selector picks a TEAM whose members
+  lift each other on bad weeks (time-decorrelation), generalizing shield/sword to N members.
+- **Frame collection** — `OnTester` ships metrics + params + the weekly vector via
+  `FrameAdd`; `OnTesterInit/Pass/Deinit` (terminal side) write every pass (local **and**
+  MQL5-Cloud agents) to `MQL5/Files/ck_opt.csv`. Harness: `backtest/opt_run.py`,
+  `pool_gen.py`/`pool_dense.py`, `promdate.py`. Runs on the **MetaQuotes** terminal
+  (Exness account + cloud agents), NOT the EXNESS terminal.
+
+## 9. PROM-DATE 3-dancer team (LOCKED 2026-06-15 — replaces the oracle kings)
+Tester-true (NBP, $1000, growth@24%DD = **57.5×**, PF 1.49, RF 25.1, 6/6, win 34%,
+payoff 2.87). ~3× the old oracle cross-king's *real* number (19.2× on the same tester).
+**Equal weight** (weights are a fine-tune; equal = anti-curve-fit). Presets `presets/PD_*.set`:
+| preset | sym | mgmt | stack | sizing | smaP | slowP | step | tpR | trailR | role |
+|---|---|---|---|---|---|---|---|---|---|---|
+| PD_BtcGF | BTCUSDc | H1 | geofloor | 1 | 18 | 270 | 1.1 | 0 | 2.5 | trend-trail |
+| PD_GoldShield | XAUUSDc | M15 | shield | 0 | 7 | 0 | — | 2.0 | 0 | gold smooth |
+| PD_BtcPG | BTCUSDc | H1 | proggeo | 0 | 12 | 0 | 1.5 | 2.0 | 0 | BTC complement |
+Caveat: back-loaded (S6 ≈ 53% of profit = recent BTC trend) — recency risk the live
+shakedown will test. The six old `*.set` (oracle kings) are retired but kept for history.
+
 ## 7. Files
 - `CrossKing_EA.mq5` — the EA (this spec's subject).
-- `presets/*.set` — the six leg presets.
+- `presets/*.set` — the six retired oracle-king presets + `PD_*.set` (the live 3-dancer team).
 - `backtest/shadow_streams.py` → `backtest/out/shadow/<leg>.csv` — the validation oracle.
