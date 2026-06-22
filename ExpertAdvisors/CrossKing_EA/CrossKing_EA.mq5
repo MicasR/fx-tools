@@ -976,8 +976,8 @@ void PushJson(string path, string body)
 {
    if(!TelemetryEnabled()) return;
    char post[], result[]; string headers = "Content-Type: application/json\r\n", rhdr;
-   StringToCharArray(body, post, 0, StringLen(body), CP_UTF8);
-   int sz = ArraySize(post); if(sz > 0) ArrayResize(post, sz - 1);   // drop trailing NUL
+   int n = StringToCharArray(body, post, 0, WHOLE_ARRAY, CP_UTF8);   // copies body + terminating NUL
+   if(n > 1) ArrayResize(post, n - 1);                               // drop ONLY the NUL (keep full JSON, incl. closing brace)
    int code = WebRequest("POST", InpTelemetryURL + path, headers, 5000, post, result, rhdr);
    if(code == -1) PrintFormat("[CrossKing:%s] WebRequest %s failed err=%d (whitelist the URL)",
                               InpLegName, path, GetLastError());
