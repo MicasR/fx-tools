@@ -20,5 +20,5 @@ InpTrailR=2.5
 InpTROverride=0.0
 InpMPLOverride=0.0
 InpDeviation=50
-InpTelemetryURL=
+InpTelemetryURL=http://127.0.0.1:8800
 InpHeartbeatSec=30
