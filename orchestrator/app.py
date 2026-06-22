@@ -23,6 +23,16 @@ app = FastAPI(title="CrossKing Orchestrator")
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 
+@app.middleware("http")
+async def _force_close(request, call_next):
+    """MT5 WebRequest (WinHTTP) mishandles HTTP keep-alive: the first POST on a fresh socket
+    succeeds, then reuse of the idle-closed keep-alive connection fails with err=5203 (the POST
+    never reaches us). Return Connection: close so every EA request uses a fresh connection."""
+    resp = await call_next(request)
+    resp.headers["Connection"] = "close"
+    return resp
+
+
 @app.get("/")
 def dashboard():
     return FileResponse(os.path.join(_STATIC, "dashboard.html"))
@@ -84,8 +94,7 @@ def _rebalance():
     return T, dd, plan
 
 
-@app.post("/telemetry")
-def telemetry(t: Telemetry):
+def _ingest_telemetry(t: Telemetry):
     if t.account not in ACCT:
         return {"ok": False, "error": "unknown account"}
     now = time.time()
@@ -100,12 +109,41 @@ def telemetry(t: Telemetry):
     return {"ok": True, "halt": breaker.halted, "T": round(T, 2), "dd": round(dd, 4)}
 
 
-@app.post("/op_close")
-def op_close(o: OpClose):
+# The EA sends telemetry over GET (query params), not POST: MT5's WebRequest runs on WinINet,
+# which mishandles reused keep-alive connections for POST (non-idempotent -> not auto-retried,
+# fails err=5203), while GET self-heals. POST is kept for tests/other clients.
+@app.post("/telemetry")
+def telemetry_post(t: Telemetry):
+    return _ingest_telemetry(t)
+
+
+@app.get("/telemetry")
+def telemetry_get(account: str, symbol: str = "", balance: float = 0.0, equity: float = 0.0,
+                  is_open: bool = False, dir: int = 0, stack: int = 0, open_r: float = 0.0,
+                  ml_sl: float = 0.0, ver: str = ""):
+    return _ingest_telemetry(Telemetry(account=account, symbol=symbol, balance=balance,
+                             equity=equity, is_open=is_open, dir=dir, stack=stack,
+                             open_r=open_r, ml_sl=ml_sl, ver=ver))
+
+
+def _ingest_op_close(o: OpClose):
     db.add_op(ts=time.time(), account=o.account, symbol=o.symbol, realized_r=o.realized_r,
               positions=o.positions, reason=o.reason, open_time=o.open_time, close_time=o.close_time)
     db.log("op", f"{o.account} R={o.realized_r:+.3f} x{o.positions} {o.reason}")
     return {"ok": True}
+
+
+@app.post("/op_close")
+def op_close_post(o: OpClose):
+    return _ingest_op_close(o)
+
+
+@app.get("/op_close")
+def op_close_get(account: str, symbol: str = "", realized_r: float = 0.0, positions: int = 1,
+                 reason: str = "", open_time: float = 0.0, close_time: float = 0.0):
+    return _ingest_op_close(OpClose(account=account, symbol=symbol, realized_r=realized_r,
+                            positions=positions, reason=reason, open_time=open_time,
+                            close_time=close_time))
 
 
 @app.get("/control/{account}")

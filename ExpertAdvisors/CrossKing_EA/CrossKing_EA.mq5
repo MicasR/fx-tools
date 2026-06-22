@@ -170,10 +170,13 @@ int OnInit()
                InpMult, InpProgStep, InpTpR, InpTrailR, g_TR, g_MPL);
    // adopt an already-open op (restart safety): if positions exist, resume managing.
    AdoptExistingOp();
+   // heartbeat on a wall-clock TIMER (not ticks): reliable reporting even when the symbol is
+   // quiet/closed, and isolates the (blocking) WebRequest from the trade-critical OnTick path.
+   if(TelemetryEnabled()) EventSetTimer(MathMax(1, InpHeartbeatSec));
    return INIT_SUCCEEDED;
 }
 
-void OnDeinit(const int reason) {}
+void OnDeinit(const int reason) { EventKillTimer(); }
 
 //+==================================================================+
 //|  OnTester — the FIDELITY §3.6 search criterion.                  |
@@ -543,7 +546,7 @@ void OnTick()
       ApplyStopAll(stop, tp);
    }
 
-   Heartbeat(cnt);
+   // (heartbeat moved to OnTimer -- reliable cadence, off the tick path)
 
    // ----- entry cadence: new H1 bar -> detect + arm (only when flat) -----
    datetime h1b = iTime(_Symbol, InpEntryTF, 0);
@@ -971,19 +974,25 @@ bool TelemetryEnabled()
    return (InpTelemetryURL != "" && !(bool)MQLInfoInteger(MQL_TESTER));
 }
 
-// POST `body` to InpTelemetryURL + path (base URL = the orchestrator, no trailing slash).
-void PushJson(string path, string body)
+// GET `InpTelemetryURL + pathq` (base URL = the orchestrator, no trailing slash). We use GET, not
+// POST: MT5 WebRequest runs on WinINet, whose keep-alive pool fails on reused POSTs (err=5203 --
+// non-idempotent, so WinINet won't retry on a stale handle) while it self-heals GETs. A unique
+// &_=tick cache-buster stops WinINet from caching/reusing a stale connection. Result -> `result`.
+int HttpGet(string pathq, char &result[])
 {
-   if(!TelemetryEnabled()) return;
-   char post[], result[]; string headers = "Content-Type: application/json\r\n", rhdr;
-   int n = StringToCharArray(body, post, 0, WHOLE_ARRAY, CP_UTF8);   // copies body + terminating NUL
-   if(n > 1) ArrayResize(post, n - 1);                               // drop ONLY the NUL (keep full JSON, incl. closing brace)
-   int code = WebRequest("POST", InpTelemetryURL + path, headers, 5000, post, result, rhdr);
-   if(code == -1) PrintFormat("[CrossKing:%s] WebRequest %s failed err=%d (whitelist the URL)",
-                              InpLegName, path, GetLastError());
+   if(!TelemetryEnabled()) return -1;
+   char data[]; string rhdr;
+   string sep = (StringFind(pathq, "?") >= 0) ? "&" : "?";
+   string url = InpTelemetryURL + pathq + sep + "_=" + (string)GetTickCount();
+   ResetLastError();
+   int code = WebRequest("GET", url, "", 5000, data, result, rhdr);
+   if(code != 200) PrintFormat("[CrossKing:%s] GET %s failed code=%d err=%d",
+                               InpLegName, pathq, code, GetLastError());
+   return code;
 }
 
-// Current account + op state -> POST /telemetry (matches orchestrator Telemetry contract).
+// Current account + op state -> GET /telemetry (query params; matches orchestrator contract).
+// Values are numbers + simple identifiers (leg/symbol have no URL-special chars) -> no encoding.
 void SendState()
 {
    if(!TelemetryEnabled()) return;
@@ -995,30 +1004,26 @@ void SendState()
       double px = (g_dir == 1) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       openR = g_dir * (px - g_e0) / g_r0;
    }
-   string body = StringFormat("{\"account\":\"%s\",\"symbol\":\"%s\",\"balance\":%.2f,\"equity\":%.2f,"
-                 "\"is_open\":%s,\"dir\":%d,\"stack\":%d,\"open_r\":%.3f,\"ml_sl\":%.5f,\"ver\":\"%s\"}",
-                 InpLegName, _Symbol, AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY),
-                 (g_inop ? "true" : "false"), g_dir, n, openR, ml, "1.0");
-   PushJson("/telemetry", body);
+   string q = StringFormat("/telemetry?account=%s&symbol=%s&balance=%.2f&equity=%.2f"
+              "&is_open=%s&dir=%d&stack=%d&open_r=%.3f&ml_sl=%.5f&ver=%s",
+              InpLegName, _Symbol, AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY),
+              (g_inop ? "true" : "false"), g_dir, n, openR, ml, "1.0");
+   char res[]; HttpGet(q, res);
 }
 
 // Poll the orchestrator "no new ops" flag. FAIL-OPEN: on any error g_halt is left unchanged
 // (trade execution never depends on the orchestrator being reachable).
 void PollControl()
 {
-   if(!TelemetryEnabled()) return;
-   char data[], result[]; string rhdr;
-   int code = WebRequest("GET", InpTelemetryURL + "/control/" + InpLegName, "", 5000, data, result, rhdr);
-   if(code == 200)
-      g_halt = (StringFind(CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8), "\"halt\":true") >= 0);
+   char res[];
+   if(HttpGet("/control/" + InpLegName, res) == 200)
+      g_halt = (StringFind(CharArrayToString(res, 0, WHOLE_ARRAY, CP_UTF8), "\"halt\":true") >= 0);
 }
 
-void Heartbeat(int cnt)
+// Heartbeat on a wall-clock timer (set in OnInit) -> reliable cadence independent of ticks.
+void OnTimer()
 {
    if(!TelemetryEnabled()) return;
-   datetime now = TimeCurrent();
-   if(now - g_last_hb < InpHeartbeatSec) return;
-   g_last_hb = now;
    SendState();
    PollControl();
 }
@@ -1028,14 +1033,14 @@ void TelemetryOp(string ev)            // op open / add -> immediate state refre
    SendState();
 }
 
-void TelemetryOpClose(double realizedR)   // closed op -> POST /op_close (the live R-stream)
+void TelemetryOpClose(double realizedR)   // closed op -> GET /op_close (the live R-stream)
 {
    if(!TelemetryEnabled()) return;
-   string body = StringFormat("{\"account\":\"%s\",\"symbol\":\"%s\",\"realized_r\":%.4f,"
-                 "\"positions\":%d,\"reason\":\"%s\",\"open_time\":%d,\"close_time\":%d}",
-                 InpLegName, _Symbol, realizedR, g_add_count + 1, "close",
-                 (long)g_op_open_time, (long)TimeCurrent());
-   PushJson("/op_close", body);
+   string q = StringFormat("/op_close?account=%s&symbol=%s&realized_r=%.4f"
+              "&positions=%d&reason=%s&open_time=%d&close_time=%d",
+              InpLegName, _Symbol, realizedR, g_add_count + 1, "close",
+              (long)g_op_open_time, (long)TimeCurrent());
+   char res[]; HttpGet(q, res);
    SendState();                         // refresh balance / flat state post-close
 }
 //+------------------------------------------------------------------+
