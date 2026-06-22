@@ -65,8 +65,18 @@ def _rebalance():
     halted, dd = breaker.update(T, cfg)
     if halted:
         db.log("breaker", f"HALT new ops: dd={dd:.1%} peakT={breaker.peak_T:.2f}")
+    # RECONCILE first: a pending transfer is fulfilled once its leg is back within min_transfer
+    # of target (you executed it in Exness, or it's no longer needed). Confirm it so it clears
+    # the dashboard and unblocks the dedup. Without this, instructions stay 'pending' forever.
+    tg = targets(ACCT, cfg, T)
+    for t in db.pending_transfers():
+        leg = t["dst"] if t["src"] == MAIN else t["src"]
+        acc = ACCT.get(leg)
+        if acc and not acc.is_open and abs(acc.balance - tg[leg]) <= cfg.min_transfer:
+            db.confirm_transfer(t["id"])
+            db.log("transfer", f"confirm {t['reason']} {t['src']}->{t['dst']} ${t['amount']:.2f}")
     plan = plan_transfers(ACCT, cfg, T)
-    pending = {(t["src"], t["dst"]) for t in db.pending_transfers()}
+    pending = {(t["src"], t["dst"]) for t in db.pending_transfers()}   # re-read after confirms
     for t in plan:
         if (t.src, t.dst) not in pending:             # don't re-emit an outstanding instruction
             db.add_transfer(t.src, t.dst, t.amount, t.reason)
@@ -80,10 +90,11 @@ def telemetry(t: Telemetry):
         return {"ok": False, "error": "unknown account"}
     now = time.time()
     a = ACCT[t.account]
-    a.balance, a.equity, a.is_open, a.last_hb = t.balance, t.equity, t.is_open, now
-    db.upsert_account(t.account, t.balance, t.equity, t.is_open, now)
-    db.add_telemetry(ts=now, account=t.account, symbol=t.symbol, balance=t.balance,
-                     equity=t.equity, is_open=int(t.is_open), dir=t.dir, stack=t.stack,
+    bal, eq = cfg.to_usd(t.account, t.balance), cfg.to_usd(t.account, t.equity)  # USC -> USD
+    a.balance, a.equity, a.is_open, a.last_hb = bal, eq, t.is_open, now
+    db.upsert_account(t.account, bal, eq, t.is_open, now)
+    db.add_telemetry(ts=now, account=t.account, symbol=t.symbol, balance=bal,
+                     equity=eq, is_open=int(t.is_open), dir=t.dir, stack=t.stack,
                      open_r=t.open_r, ml_sl=t.ml_sl, ver=t.ver)
     T, dd, _ = _rebalance()
     return {"ok": True, "halt": breaker.halted, "T": round(T, 2), "dd": round(dd, 4)}
@@ -99,7 +110,11 @@ def op_close(o: OpClose):
 
 @app.get("/control/{account}")
 def control(account: str):
-    """EA polls this; trade execution continues if the orchestrator is down (fail-open)."""
+    """EA polls this every heartbeat; trade execution continues if the orchestrator is down
+    (fail-open). The poll is also proof-of-life: refresh last_hb so a leg that is alive and
+    talking (even before its first telemetry lands) shows live on the dashboard."""
+    if account in ACCT:
+        ACCT[account].last_ctrl = time.time()      # proof-of-life only (NOT balance freshness)
     return {"halt": breaker.halted}
 
 
@@ -121,9 +136,11 @@ def status():
     accts = []
     for name in cfg.accounts:
         a = ACCT[name]
+        seen = a.last_seen()
         accts.append(dict(name=name, weight=cfg.weight(name), balance=round(a.balance, 2),
                           equity=round(a.equity, 2), target=round(tg[name], 2), is_open=a.is_open,
-                          stale=(now - a.last_hb > cfg.heartbeat_timeout_s) if a.last_hb else True))
+                          stale=(now - seen > cfg.heartbeat_timeout_s) if seen else True,
+                          no_data=(a.last_hb == 0)))    # alive but never sent balance yet
     return dict(T=round(T, 2), peak_T=round(breaker.peak_T, 2),
                 drawdown=round(0 if breaker.peak_T <= 0 else (breaker.peak_T - T) / breaker.peak_T, 4),
                 breaker_dd=cfg.breaker_dd, halted=breaker.halted, f_total=cfg.f_total,

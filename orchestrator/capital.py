@@ -19,7 +19,12 @@ class Account:
     balance: float = 0.0      # realized balance (what funds the next op's 1R)
     equity: float = 0.0       # balance + floating (for T / drawdown)
     is_open: bool = False     # True while an op is live (LOCKED -- no transfers)
-    last_hb: float = 0.0      # epoch seconds of last heartbeat
+    last_hb: float = 0.0      # epoch s of last TELEMETRY (fresh balance/equity data)
+    last_ctrl: float = 0.0    # epoch s of last CONTROL poll (proof-of-life, no balance)
+
+    def last_seen(self):
+        """Most recent contact of any kind (telemetry or control) -- liveness for the dot."""
+        return max(self.last_hb, self.last_ctrl)
 
 
 @dataclass

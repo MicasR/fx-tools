@@ -21,8 +21,12 @@ def chk(n, c):
 
 
 def tele(acct, bal, eq=None, is_open=False):
-    return client.post("/telemetry", json=dict(account=acct, balance=bal,
-                       equity=bal if eq is None else eq, is_open=is_open)).json()
+    # the real EA reports each account's NATIVE units; cent (USC) legs send x100, which the
+    # orchestrator normalizes back to USD. Send native here so USD assertions below hold.
+    sc = 100 if acct in A.cfg.cent_accounts else 1
+    eqv = bal if eq is None else eq
+    return client.post("/telemetry", json=dict(account=acct, balance=bal * sc,
+                       equity=eqv * sc, is_open=is_open)).json()
 
 # seed all accounts at $1000 total, on-target (Main holds reserve)
 T0 = 1000.0
@@ -44,6 +48,14 @@ chk("telemetry returns halt flag + T", "halt" in r and "T" in r)
 st = client.get("/status").json()
 sweep = [t for t in st["pending_transfers"] if t["src"] == "PD3_GoldGeo_0" and t["reason"] == "sweep"]
 chk("win -> pending sweep gold-geo-0 -> main", len(sweep) == 1)
+
+# simulate executing that sweep in Exness: gold-geo-0 back to target, Main now holds the +25.
+# next telemetry must reconcile the pending instruction out (it is no longer needed).
+tele("PD3_GoldGeo_0", round(tg["PD3_GoldGeo_0"], 2))
+tele("Main", round(T0 - sum(tg.values()) + 25, 2))
+st = client.get("/status").json()
+chk("executed transfer -> reconciled out of pending",
+    not any(t["src"] == "PD3_GoldGeo_0" and t["reason"] == "sweep" for t in st["pending_transfers"]))
 
 # op close records an immutable R-stream row
 client.post("/op_close", json=dict(account="PD3_GoldGeo_0", realized_r=2.5, positions=4,
