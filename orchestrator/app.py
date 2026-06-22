@@ -14,6 +14,7 @@ from .db import DB
 cfg = DEFAULT
 db = DB()
 breaker = Breaker()
+_START = time.time()
 ACCT = {a: Account(a) for a in cfg.accounts}          # in-memory live state
 for name, r in db.accounts().items():                 # warm-start from DB
     if name in ACCT:
@@ -25,9 +26,9 @@ _STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 @app.middleware("http")
 async def _force_close(request, call_next):
-    """MT5 WebRequest (WinHTTP) mishandles HTTP keep-alive: the first POST on a fresh socket
-    succeeds, then reuse of the idle-closed keep-alive connection fails with err=5203 (the POST
-    never reaches us). Return Connection: close so every EA request uses a fresh connection."""
+    """MT5 WebRequest (WinINet) mishandles HTTP keep-alive: it reuses an idle-closed pooled
+    connection and (for POST) fails with err=5203 instead of retrying. Return Connection: close so
+    every EA request uses a fresh connection. The EA also uses GET (idempotent) + a cache-buster."""
     resp = await call_next(request)
     resp.headers["Connection"] = "close"
     return resp
@@ -184,3 +185,20 @@ def status():
                 breaker_dd=cfg.breaker_dd, halted=breaker.halted, f_total=cfg.f_total,
                 accounts=accts, pending_transfers=db.pending_transfers(),
                 rstream=db.op_rstream())
+
+
+@app.get("/health")
+def health():
+    """Lightweight liveness/health for the watchdog + ops checks. Reports uptime and, per leg,
+    telemetry age (seconds since last balance push) and whether it's currently alive."""
+    now = time.time()
+    legs = []
+    for name in cfg.accounts:
+        a = ACCT[name]
+        seen = a.last_seen()
+        legs.append(dict(name=name,
+                         telemetry_age_s=round(now - a.last_hb, 1) if a.last_hb else None,
+                         alive=bool(seen and (now - seen) <= cfg.heartbeat_timeout_s)))
+    return dict(ok=True, uptime_s=round(now - _START, 1), T=round(total_equity(ACCT), 2),
+                halted=breaker.halted, legs_alive=sum(1 for l in legs if l["alive"]),
+                legs_total=len(legs), legs=legs)
