@@ -324,6 +324,39 @@ void RefreshSpecs()
 }
 
 //+------------------------------------------------------------------+
+//| Ensure trade specs are live before the tick's trade logic runs.  |
+//| TR (tick value/size) can read 0 when the symbol's market data is |
+//| not yet ready at OnInit -- and RefreshSpecs is otherwise only     |
+//| called at init/op-transitions, so a 0 PERSISTS FOREVER: ArmStop   |
+//| aborts on TR<=0, no op ever opens, nothing re-reads the specs ->  |
+//| a silently dead EA (the 2026-06-23 T2 XAUUSDc miss: init logged   |
+//| TR=0.00000 MPL=0.00000, every signal dropped with no order/error).|
+//| Self-heal: re-read on the tick. TR>0 is the hard requirement --   |
+//| MPL=0 means "margin model off", which the sizing path already     |
+//| tolerates (MarginCap/ArmStop guard on g_MPL>0). Symbol-agnostic:  |
+//| works for every leg/symbol/terminal. Returns false (throttled     |
+//| warn) while TR is still unreadable so the caller skips the tick.  |
+//+------------------------------------------------------------------+
+bool EnsureSpecs()
+{
+   if(g_TR > 0.0) return true;                      // steady state: zero overhead
+   RefreshSpecs();                                  // symbol may now be ready
+   if(g_TR > 0.0)
+   {
+      PrintFormat("[CrossKing:%s] specs recovered  TR=%.5f MPL=%.5f", InpLegName, g_TR, g_MPL);
+      return true;
+   }
+   static datetime s_spec_warn = 0;
+   if(TimeCurrent() - s_spec_warn >= 60)            // throttle: one warn/minute
+   {
+      s_spec_warn = TimeCurrent();
+      PrintFormat("[CrossKing:%s] specs not ready (TR=0) -- skipping tick until live symbol data arrives",
+                  InpLegName);
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
 //| 1R in $ for a new op. LIVE: whole account balance (the orchestrator|
 //| keeps the account ~1R). TESTER: InpFixedE0 > 0 pins E0 constant so |
 //| the lone account does not self-compound (no orchestrator sweep) -- |
@@ -529,6 +562,11 @@ void DeletePendings(int which)
 //+==================================================================+
 void OnTick()
 {
+   // Specs (TR/MPL) can read 0 at load if the symbol's market data isn't ready yet, and would
+   // otherwise never recover (see EnsureSpecs). Re-read & skip the tick until they're live --
+   // this also guards an open op, since a TR=0 margin_line would compute SL=0 and wipe the stop.
+   if(!EnsureSpecs()) return;
+
    double e_arr[], l_arr[];
    int cnt = ScanBook(e_arr, l_arr);
 
@@ -655,13 +693,20 @@ void EntryCadence()
    if(CountPendings() > 0)
    {
       if(iBarShift(_Symbol, InpEntryTF, g_arm_bar, false) >= InpBreakBars)
+      {
+         PrintFormat("[CrossKing:%s] stale-cancel pending pair (no breakout within %d H1 bars)",
+                     InpLegName, InpBreakBars);
          DeletePendings(0);
+      }
       return;                                  // keep waiting for a fill
    }
    if(!IsTriggerBar()) return;
    double th = iHigh(_Symbol, InpEntryTF, 1), tl = iLow(_Symbol, InpEntryTF, 1);
    double rng = th - tl;
    if(rng <= 0) return;
+   PrintFormat("[CrossKing:%s] TRIGGER on H1 bar %s -> arming OCO  high=%.5f low=%.5f R=%.5f",
+               InpLegName, TimeToString(iTime(_Symbol, InpEntryTF, 1), TIME_DATE | TIME_MINUTES),
+               th, tl, rng);
    ArmStop(true,  th, tl);                      // Buy Stop @ high, SL = low
    ArmStop(false, tl, th);                      // Sell Stop @ low, SL = high
    g_pH = th; g_pL = tl; g_pR = rng; g_arm_bar = iTime(_Symbol, InpEntryTF, 0);
@@ -673,29 +718,61 @@ void EntryCadence()
 //+------------------------------------------------------------------+
 void ArmStop(bool is_buy, double price, double sl)
 {
+   string side = is_buy ? "BuyStop" : "SellStop";
    double E0 = OpE0();
    double rng = MathAbs(price - sl);
-   if(rng <= 0 || g_TR <= 0) return;
+   if(rng <= 0 || g_TR <= 0)
+   {
+      PrintFormat("[CrossKing:%s] ARM %s skipped: rng=%.5f TR=%.5f (range/specs invalid)",
+                  InpLegName, side, rng, g_TR);
+      return;
+   }
    double lot = E0 / (g_TR * rng);              // lot_to_pin([], entry, SL) = E0/(TR*R)
    lot = MathMax(QFloor(lot), VOL_MIN);
    if(g_MPL > 0) lot = MathMin(lot, QFloor(E0 / g_MPL));   // base must fit the deposit
    lot = MathMin(lot, VOL_MAX);
    lot = NormalizeLot(lot);
-   if(lot <= 0) return;
+   if(lot <= 0)
+   {
+      PrintFormat("[CrossKing:%s] ARM %s skipped: lot=0 (E0=%.2f rng=%.5f MPL=%.5f)",
+                  InpLegName, side, E0, rng, g_MPL);
+      return;
+   }
    price = NormalizeDouble(price, _Digits);
    sl    = NormalizeDouble(sl, _Digits);
+   // BUG (future fix; see memory crossking-armstop-stoplevel-skip-bug): when price has ALREADY
+   // crossed `price` by arm time (fast/intrabar breakout, or a narrow trigger bar) the stops-
+   // level guard below rejects this leg, so the breakout in that direction is missed. The skip
+   // now LOGS (below) instead of being silent; the remaining fix is to enter at MARKET when
+   // price is already beyond the level by >= minstop, rather than skipping.
    double minstop = (double)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * g_point;
    if(is_buy)
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      if(price - ask < minstop) return;
-      g_trade.BuyStop(lot, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, "CK_" + InpLegName);
+      if(price - ask < minstop)
+      {
+         PrintFormat("[CrossKing:%s] ARM BuyStop skipped: %.5f within stops-level of ask %.5f (minstop=%.5f)",
+                     InpLegName, price, ask, minstop);
+         return;
+      }
+      if(g_trade.BuyStop(lot, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, "CK_" + InpLegName))
+         PrintFormat("[CrossKing:%s] ARM BuyStop placed lot=%.2f @ %.5f (SL %.5f)", InpLegName, lot, price, sl);
+      else
+         PrintFormat("[CrossKing:%s] ARM BuyStop FAILED lot=%.2f @ %.5f ret=%d", InpLegName, lot, price, g_trade.ResultRetcode());
    }
    else
    {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      if(bid - price < minstop) return;
-      g_trade.SellStop(lot, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, "CK_" + InpLegName);
+      if(bid - price < minstop)
+      {
+         PrintFormat("[CrossKing:%s] ARM SellStop skipped: %.5f within stops-level of bid %.5f (minstop=%.5f)",
+                     InpLegName, price, bid, minstop);
+         return;
+      }
+      if(g_trade.SellStop(lot, price, _Symbol, 0.0, 0.0, ORDER_TIME_GTC, 0, "CK_" + InpLegName))
+         PrintFormat("[CrossKing:%s] ARM SellStop placed lot=%.2f @ %.5f (SL %.5f)", InpLegName, lot, price, sl);
+      else
+         PrintFormat("[CrossKing:%s] ARM SellStop FAILED lot=%.2f @ %.5f ret=%d", InpLegName, lot, price, g_trade.ResultRetcode());
    }
 }
 
