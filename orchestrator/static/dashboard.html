@@ -47,7 +47,7 @@
   <section class="card"><h2>Live R-stream (cumulative, per leg + combined)</h2><canvas id="rchart" height="150"></canvas></section>
 </main>
 <script>
-const $=id=>document.getElementById(id); let chart;
+const $=id=>document.getElementById(id); let chart, lastRsig=null;
 const money=v=>'$'+(v??0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 async function tick(){
   let s; try{s=await (await fetch('/status')).json()}catch(e){return}
@@ -71,12 +71,27 @@ async function tick(){
   drawR(s.rstream||[]);
 }
 function drawR(rs){
+  // Skip entirely when the R-stream is byte-for-byte unchanged — avoids the
+  // 3s destroy/rebuild flicker when /status returns the same data.
+  const sig=JSON.stringify(rs);
+  if(sig===lastRsig) return;
+  lastRsig=sig;
   const legs={}, order=[]; let comb=0; const cl=[];
   rs.forEach((o,i)=>{ if(!(o.account in legs)){legs[o.account]=[];order.push(o.account)}
     comb+=o.realized_r; cl.push(comb); });
   // per-leg cumulative aligned to op index
   const series=order.map(a=>{let c=0;return rs.map(o=>{if(o.account===a)c+=o.realized_r;return c})});
   const labels=rs.map((_,i)=>i+1);
+  // If the chart already exists with the same leg set, update in place
+  // (no destroy → no re-animation, just the new points).
+  if(chart && chart.data.datasets.length===order.length+1
+     && order.every((a,i)=>chart.data.datasets[i].label===a)){
+    chart.data.labels=labels;
+    order.forEach((a,i)=>{chart.data.datasets[i].data=series[i]});
+    chart.data.datasets[order.length].data=cl;
+    chart.update();
+    return;
+  }
   const ds=order.map((a,i)=>({label:a,data:series[i],borderWidth:1.3,pointRadius:0,tension:.15}));
   ds.push({label:'COMBINED',data:cl,borderColor:'#fff',borderWidth:2.4,pointRadius:0,tension:.15});
   if(chart)chart.destroy();
