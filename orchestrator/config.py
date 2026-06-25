@@ -10,7 +10,21 @@ F_total is the deployment dial:
   ~0.054 (5.4%)  -> the 24%-DD design point (research operating point)
   hot shakedown  -> set higher deliberately (mechanics test, not P&L); see SYSTEM_PLAN D.
 """
+import json
+import os
 from dataclasses import dataclass
+
+_TERMINALS_PATH = os.path.join(os.path.dirname(__file__), "terminals.json")
+
+
+def _load_terminals():
+    """Optional gitignored map: leg account -> {tn, role, login, broker, server, symbol}.
+    Generated from terminals.xlsx by ops/gen_terminals.py (passwords excluded). Absent in dev."""
+    try:
+        with open(_TERMINALS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 @dataclass(frozen=True)
@@ -39,7 +53,7 @@ MAIN = "Main"          # the Main reporter EA's InpLegName (USD account)
 
 class Config:
     def __init__(self, f_total=0.054, breaker_dd=0.35, min_transfer=0.50,
-                 heartbeat_timeout_s=300):
+                 heartbeat_timeout_s=300, start_capital=0.0):
         s = sum(l.weight for l in _RAW_LEGS)
         self.legs = [Leg(l.account, l.preset, l.symbol, l.weight / s, l.cents) for l in _RAW_LEGS]
         self.accounts = [l.account for l in self.legs] + [MAIN]
@@ -48,12 +62,37 @@ class Config:
         self.breaker_dd = breaker_dd        # halt-new-ops drawdown threshold (35% shakedown / 80% live)
         self.min_transfer = min_transfer    # don't emit a transfer smaller than this ($)
         self.heartbeat_timeout_s = heartbeat_timeout_s
+        self.start_capital = start_capital  # total deposited; baseline for $ profit (0 = unset)
+        self.terminals = _load_terminals()  # leg -> terminal/account metadata (for the UI)
 
     def weight(self, account):
         for l in self.legs:
             if l.account == account:
                 return l.weight
         return None                          # Main has no weight (it's the reserve)
+
+    def terminal(self, account):
+        """Terminal/account metadata for `account` (Tn, Exness login, broker, ...) or None."""
+        return self.terminals.get(account)
+
+    def apply_overrides(self, d):
+        """Overlay persisted/owner settings onto the live config. Accepts the scalar dials and
+        per-leg weights as `weight_<account>`; weights are renormalized to sum 1 (preset/symbol/
+        cents preserved). Mutates in place so the running brain picks the change up immediately."""
+        if not d:
+            return
+        if "f_total" in d:             self.f_total = float(d["f_total"])
+        if "breaker_dd" in d:          self.breaker_dd = float(d["breaker_dd"])
+        if "min_transfer" in d:        self.min_transfer = float(d["min_transfer"])
+        if "heartbeat_timeout_s" in d: self.heartbeat_timeout_s = float(d["heartbeat_timeout_s"])
+        if "start_capital" in d:       self.start_capital = float(d["start_capital"])
+        wkeys = {k[len("weight_"):]: float(v) for k, v in d.items() if k.startswith("weight_")}
+        if wkeys:
+            raw = {l.account: wkeys.get(l.account, l.weight) for l in self.legs}
+            s = sum(raw.values())
+            if s > 0:
+                self.legs = [Leg(l.account, l.preset, l.symbol, raw[l.account] / s, l.cents)
+                             for l in self.legs]
 
     def to_usd(self, account, value):
         """Normalize a leg's native-currency amount to USD. Cent (USC) accounts report in

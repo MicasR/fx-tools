@@ -3,16 +3,23 @@ EA control-flag + dashboard JSON. Trade execution NEVER depends on this being up
 Run: uvicorn orchestrator.app:app --host 0.0.0.0 --port 8800
 """
 import os
+import copy
 import time
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+import hmac
+import base64
+import hashlib
+import secrets
+from fastapi import FastAPI, Response, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from .config import DEFAULT, MAIN
 from .capital import Account, targets, plan_transfers, total_equity, Breaker
 from .db import DB
+from .metrics import compute as compute_metrics
 
 cfg = DEFAULT
-db = DB()
+db = DB(os.environ.get("CK_DB", "orchestrator/state.db"))   # CK_DB lets tests use a throwaway DB
+cfg.apply_overrides(db.get_settings())                # restore owner's persisted live settings
 breaker = Breaker()
 _START = time.time()
 ACCT = {a: Account(a) for a in cfg.accounts}          # in-memory live state
@@ -23,20 +30,128 @@ for name, r in db.accounts().items():                 # warm-start from DB
 app = FastAPI(title="CrossKing Orchestrator")
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
 
+# --- access control -------------------------------------------------------------------------
+# Two zones, so the dashboard can be exposed to the internet (phone) without exposing the brain:
+#   * machine-to-machine (EA telemetry/op_close/control-poll + watchdog /health): VPS-local ONLY,
+#     no password. The MT5 EAs hit 127.0.0.1:8800 and can't carry an Authorization header; a
+#     remote caller could otherwise poison the brain's state, so these are hidden (404) off-box.
+#   * everything else (dashboard /, /status, /halt, /resume): HTTP Basic auth from DASH_USER/PASS.
+#     If no creds are configured we fail CLOSED -- allow only from localhost -- so opening the
+#     firewall can never accidentally publish an unprotected control panel.
+_TEST = bool(os.environ.get("CK_TEST"))                  # test client connects as a non-local host
+DASH_USER = os.environ.get("DASH_USER", "")
+DASH_PASS = os.environ.get("DASH_PASS", "")
+_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _client_is_local(request) -> bool:
+    return bool(request.client) and request.client.host in _LOCAL_HOSTS
+
+
+def _is_m2m(path: str) -> bool:
+    return (path in ("/telemetry", "/op_close", "/health")
+            or path == "/control" or path.startswith("/control/"))
+
+
+def _basic_ok(request) -> bool:
+    hdr = request.headers.get("authorization", "")
+    if not hdr.startswith("Basic "):
+        return False
+    try:
+        user, _, pw = base64.b64decode(hdr[6:].strip()).decode("utf-8").partition(":")
+    except Exception:
+        return False
+    return (secrets.compare_digest(user, DASH_USER)
+            and secrets.compare_digest(pw, DASH_PASS))
+
+
+# Stateless signed session cookie set by the /login form. The signing secret is derived from the
+# creds, so cookies survive a uvicorn restart (no server-side store) yet rotate automatically if
+# the password changes -- invalidating every old session.
+def _session_secret():
+    return hashlib.sha256(f"ck-session::{DASH_USER}:{DASH_PASS}".encode()).digest()
+
+
+def _make_token(ttl=30 * 86400):
+    exp = str(int(time.time()) + ttl)
+    sig = hmac.new(_session_secret(), exp.encode(), hashlib.sha256).hexdigest()
+    return f"{exp}.{sig}"
+
+
+def _valid_session(request) -> bool:
+    exp, _, sig = request.cookies.get("ck_session", "").partition(".")
+    if not sig or not exp.isdigit() or int(exp) < time.time():
+        return False
+    good = hmac.new(_session_secret(), exp.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(sig, good)
+
+
+def _gate(request):
+    """Return a denial Response, or None to allow."""
+    if _TEST:
+        return None
+    path = request.url.path
+    local = _client_is_local(request)
+    if _is_m2m(path):
+        return None if local else Response(status_code=404)
+    if path in ("/login", "/logout"):
+        return None                                  # public; POST /login validates creds itself
+    # The VPS itself (EAs, the Telegram bot, ops scripts on 127.0.0.1) is trusted. Remote callers
+    # need a valid login session cookie (browser) or HTTP Basic (curl/API -- no popup, no realm).
+    if local or _valid_session(request) or _basic_ok(request):
+        return None
+    if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+        return RedirectResponse("/login", status_code=302)   # send browsers to the login page
+    return Response(status_code=401)                          # APIs/XHR get a plain 401
+
 
 @app.middleware("http")
-async def _force_close(request, call_next):
-    """MT5 WebRequest (WinINet) mishandles HTTP keep-alive: it reuses an idle-closed pooled
-    connection and (for POST) fails with err=5203 instead of retrying. Return Connection: close so
-    every EA request uses a fresh connection. The EA also uses GET (idempotent) + a cache-buster."""
-    resp = await call_next(request)
+async def _gateway(request, call_next):
+    """Access gate, then force Connection: close. MT5 WebRequest (WinINet) mishandles HTTP
+    keep-alive: it reuses an idle-closed pooled connection and (for POST) fails with err=5203
+    instead of retrying, so every EA request must use a fresh connection."""
+    denied = _gate(request)
+    resp = denied if denied is not None else await call_next(request)
     resp.headers["Connection"] = "close"
     return resp
 
 
 @app.get("/")
 def dashboard():
-    return FileResponse(os.path.join(_STATIC, "dashboard.html"))
+    # no-cache so a redeployed dashboard always reaches the phone (the page is tiny; the only
+    # heavy asset is the Chart.js CDN, which the browser caches independently).
+    return FileResponse(os.path.join(_STATIC, "dashboard.html"),
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+class Login(BaseModel):
+    username: str
+    password: str
+
+
+@app.get("/login")
+def login_page():
+    return FileResponse(os.path.join(_STATIC, "login.html"),
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.post("/login")
+def login(c: Login):
+    if (DASH_USER and DASH_PASS
+            and secrets.compare_digest(c.username, DASH_USER)
+            and secrets.compare_digest(c.password, DASH_PASS)):
+        r = JSONResponse({"ok": True})
+        r.set_cookie("ck_session", _make_token(), max_age=30 * 86400,
+                     httponly=True, samesite="lax", path="/")
+        return r
+    return JSONResponse({"ok": False, "error": "invalid credentials"}, status_code=401)
+
+
+@app.post("/logout")
+def logout():
+    r = JSONResponse({"ok": True})
+    r.delete_cookie("ck_session", path="/")
+    return r
 
 
 class Telemetry(BaseModel):
@@ -179,11 +294,19 @@ def status():
         accts.append(dict(name=name, weight=cfg.weight(name), balance=round(a.balance, 2),
                           equity=round(a.equity, 2), target=round(tg[name], 2), is_open=a.is_open,
                           stale=(now - seen > cfg.heartbeat_timeout_s) if seen else True,
-                          no_data=(a.last_hb == 0)))    # alive but never sent balance yet
+                          no_data=(a.last_hb == 0),     # alive but never sent balance yet
+                          terminal=cfg.terminal(name)))
+    pending = db.pending_transfers()
+    for t in pending:                                   # name the real terminal/account on each move
+        t["src_terminal"] = cfg.terminal(t["src"])
+        t["dst_terminal"] = cfg.terminal(t["dst"])
+    sc = cfg.start_capital
     return dict(T=round(T, 2), peak_T=round(breaker.peak_T, 2),
                 drawdown=round(0 if breaker.peak_T <= 0 else (breaker.peak_T - T) / breaker.peak_T, 4),
                 breaker_dd=cfg.breaker_dd, halted=breaker.halted, f_total=cfg.f_total,
-                accounts=accts, pending_transfers=db.pending_transfers(),
+                start_capital=round(sc, 2), profit=round(T - sc, 2),
+                profit_pct=(round((T - sc) / sc, 4) if sc > 0 else None),
+                accounts=accts, pending_transfers=pending,
                 rstream=db.op_rstream())
 
 
@@ -202,3 +325,93 @@ def health():
     return dict(ok=True, uptime_s=round(now - _START, 1), T=round(total_equity(ACCT), 2),
                 halted=breaker.halted, legs_alive=sum(1 for l in legs if l["alive"]),
                 legs_total=len(legs), legs=legs)
+
+
+@app.get("/metrics")
+def metrics_report():
+    """Backtest-grade performance report (R units) over the full closed-op stream — combined
+    + per leg. See metrics.py for the metric set (profit factor, expectancy, recovery, ...)."""
+    return compute_metrics(db.ops_all())
+
+
+@app.get("/events")
+def events(since: float = 0.0):
+    """Recent event-log rows (newest first) after `since` epoch-s — drives the in-page alert feed."""
+    return {"events": db.events_since(since)}
+
+
+# ---- live settings (war room): full control, confirm-to-apply, persisted -------------------
+class Settings(BaseModel):
+    f_total: float
+    breaker_dd: float
+    min_transfer: float
+    heartbeat_timeout_s: float
+    start_capital: float | None = None                 # None = leave unchanged (partial update safe)
+    weights: dict = {}                                  # {leg account: weight} (renormalized on apply)
+
+
+def _settings_payload():
+    return dict(f_total=cfg.f_total, breaker_dd=cfg.breaker_dd, min_transfer=cfg.min_transfer,
+                heartbeat_timeout_s=cfg.heartbeat_timeout_s, start_capital=cfg.start_capital,
+                weights={l.account: round(l.weight, 4) for l in cfg.legs},
+                bounds=dict(f_total=[0.0, 1.0], breaker_dd=[0.0, 1.0],
+                            min_transfer=[0.0, None], heartbeat_timeout_s=[30, None],
+                            start_capital=[0.0, None]))
+
+
+def _validate(s: Settings):
+    """Validate + flatten to an overrides dict (weight_<account> keys). Raises 400 on bad input."""
+    errs = []
+    if not (0 < s.f_total <= 1):        errs.append("f_total must be in (0, 1]")
+    if not (0 < s.breaker_dd <= 1):     errs.append("breaker_dd must be in (0, 1]")
+    if s.min_transfer < 0:              errs.append("min_transfer must be >= 0")
+    if s.heartbeat_timeout_s < 30:      errs.append("heartbeat_timeout_s must be >= 30")
+    if s.start_capital is not None and s.start_capital < 0:
+        errs.append("start_capital must be >= 0")
+    valid = {l.account for l in cfg.legs}
+    w = {k: float(v) for k, v in s.weights.items() if k in valid}
+    if w:
+        if any(v < 0 for v in w.values()):  errs.append("weights must be >= 0")
+        if sum(w.values()) <= 0:            errs.append("weights must sum to > 0")
+    if errs:
+        raise HTTPException(status_code=400, detail="; ".join(errs))
+    ov = dict(f_total=s.f_total, breaker_dd=s.breaker_dd, min_transfer=s.min_transfer,
+              heartbeat_timeout_s=s.heartbeat_timeout_s)
+    if s.start_capital is not None:
+        ov["start_capital"] = s.start_capital
+    ov.update({f"weight_{k}": v for k, v in w.items()})
+    return ov
+
+
+def _preview(overrides):
+    """What applying `overrides` would do RIGHT NOW: target deltas + transfers it would fire.
+    Computed on a deep copy so the live config is untouched (used by dry_run)."""
+    trial = copy.deepcopy(cfg)
+    trial.apply_overrides(overrides)
+    T = total_equity(ACCT)
+    cur, new = targets(ACCT, cfg, T), targets(ACCT, trial, T)
+    plan = plan_transfers(ACCT, trial, T)
+    return dict(T=round(T, 2),
+                targets={k: dict(old=round(cur[k], 2), new=round(new[k], 2)) for k in new},
+                transfers=[dict(src=t.src, dst=t.dst, amount=t.amount, reason=t.reason)
+                           for t in plan])
+
+
+@app.get("/settings")
+def get_settings():
+    return _settings_payload()
+
+
+@app.post("/settings")
+def post_settings(s: Settings, dry_run: int = 0):
+    overrides = _validate(s)
+    if dry_run:
+        return dict(ok=True, preview=_preview(overrides))
+    for k, v in overrides.items():                      # persist (survives restart) then apply live
+        db.set_setting(k, v)
+    cfg.apply_overrides(overrides)
+    db.log("settings", "f_total={f_total} breaker_dd={breaker_dd} min_transfer={min_transfer} "
+           "heartbeat={heartbeat_timeout_s}".format(**overrides)
+           + " weights=" + ",".join(f"{k[7:]}:{v:.3f}" for k, v in overrides.items()
+                                     if k.startswith("weight_")))
+    return dict(ok=True, applied=_settings_payload())

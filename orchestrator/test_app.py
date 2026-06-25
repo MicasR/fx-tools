@@ -3,7 +3,8 @@ Verifies SYSTEM_PLAN Phase C exit ('end-to-end on synthetic telemetry: targets, 
 alerts, dashboard correct'). Run: python -m orchestrator.test_app  (from repo root)."""
 import os
 os.environ["CK_TEST"] = "1"
-DBP = "orchestrator/state.db"
+# Use a throwaway DB (never the live state.db) — app.py honors CK_DB. Safe to run on the live box.
+DBP = os.environ.setdefault("CK_DB", "orchestrator/test_state.db")
 for p in (DBP, DBP + "-wal", DBP + "-shm"):
     if os.path.exists(p):
         os.remove(p)                               # fresh db
@@ -77,9 +78,29 @@ for l in A.cfg.legs:
 tele("Main", 1.0, eq=1.0)
 chk("breaker trips on >35% equity crater", client.get("/status").json()["halted"] is True)
 
+# performance metrics report (one op_close happened above: PD3_GoldGeo_0 R=2.5)
+m = client.get("/metrics").json()
+chk("/metrics has combined + per_leg", "combined" in m and "per_leg" in m)
+chk("/metrics counts the closed op", m["combined"]["trades"] == 1 and abs(m["combined"]["net_r"] - 2.5) < 1e-6)
+
+# live settings: dry_run must NOT mutate; apply must shift weights + persist
+g = client.get("/settings").json()
+chk("/settings exposes weights + dials", "weights" in g and "f_total" in g)
+w0 = g["weights"]["PD3_BtcTrail_1"]
+body = dict(f_total=g["f_total"], breaker_dd=g["breaker_dd"], min_transfer=g["min_transfer"],
+            heartbeat_timeout_s=g["heartbeat_timeout_s"],
+            weights={k: (0.5 if k == "PD3_BtcTrail_1" else 0.1) for k in g["weights"]})
+dry = client.post("/settings?dry_run=1", json=body).json()
+chk("dry_run returns preview + leaves live config unchanged",
+    "preview" in dry and abs(client.get("/settings").json()["weights"]["PD3_BtcTrail_1"] - w0) < 1e-9)
+client.post("/settings", json=body)
+chk("apply raises BtcTrail_1 weight", client.get("/settings").json()["weights"]["PD3_BtcTrail_1"] > w0)
+bad = dict(body); bad["f_total"] = 1.5
+chk("invalid f_total -> 400", client.post("/settings", json=bad).status_code == 400)
+
 print("== dashboard ==")
 d = client.get("/")
-chk("GET / serves the control-center HTML", d.status_code == 200 and "CROSSKING" in d.text)
+chk("GET / serves the control-center HTML", d.status_code == 200 and "crossking" in d.text.lower())
 
 print(f"\n{sum(P)}/{len(P)} passed")
 raise SystemExit(0 if all(P) else 1)

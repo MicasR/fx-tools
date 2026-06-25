@@ -27,3 +27,4 @@ vps.txt
 *.secret
 secrets/
 ~$*
+orchestrator/terminals.json

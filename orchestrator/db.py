@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS transfers (          -- immutable: every rebalance in
 CREATE TABLE IF NOT EXISTS events (             -- ops/transfers/alerts/breaker log
   id INTEGER PRIMARY KEY, ts REAL, kind TEXT, detail TEXT
 );
+CREATE TABLE IF NOT EXISTS settings (           -- live, owner-tunable config overrides (war room)
+  key TEXT PRIMARY KEY, value REAL, updated_ts REAL
+);
 """
 
 
@@ -74,3 +77,23 @@ class DB:
     def op_rstream(self):
         return [dict(r) for r in self.cx.execute(
             "SELECT account,realized_r,close_time FROM ops ORDER BY close_time")]
+
+    def ops_all(self):
+        """Full op rows ordered by close_time — for the backtest-grade metrics report."""
+        return [dict(r) for r in self.cx.execute("SELECT * FROM ops ORDER BY close_time, id")]
+
+    def events_since(self, since=0.0, limit=200):
+        """Recent event-log rows after `since` (epoch s), newest first — for the in-page feed."""
+        return [dict(r) for r in self.cx.execute(
+            "SELECT id,ts,kind,detail FROM events WHERE ts > ? ORDER BY ts DESC, id DESC LIMIT ?",
+            (since, limit))]
+
+    def get_settings(self):
+        """All persisted config overrides as {key: value}."""
+        return {r["key"]: r["value"] for r in self.cx.execute("SELECT key,value FROM settings")}
+
+    def set_setting(self, key, value):
+        self.cx.execute(
+            "INSERT INTO settings(key,value,updated_ts) VALUES(?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=?,updated_ts=?",
+            (key, value, time.time(), value, time.time())); self.cx.commit()
