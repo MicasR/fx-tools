@@ -23,6 +23,15 @@ def send(text):
         print(f"[bot] send failed: {e}")
 
 
+def tlabel(name, term):
+    """`T1 PD3_BtcTrail_1 #12345` when the terminal map is present, else just the leg name."""
+    if not term:
+        return name
+    tn = term.get("tn")
+    login = term.get("login")
+    return (f"{tn} " if tn else "") + name + (f" #{login}" if login else "")
+
+
 def fmt_status(s):
     lines = [f"T=${s['T']:,.0f}  DD={s['drawdown']*100:.1f}% / {s['breaker_dd']*100:.0f}%"
              f"  {'HALTED' if s['halted'] else 'running'}"]
@@ -65,16 +74,19 @@ def run():
             pass
         try:                                            # alerts off /status
             s = httpx.get(f"{ORCH}/status", timeout=10).json()
+            term = {a["name"]: a.get("terminal") for a in s["accounts"]}
             for t in s.get("pending_transfers", []):
                 if t["id"] not in seen_xfer:
                     seen_xfer.add(t["id"])
-                    send(f"💸 TRANSFER: move ${t['amount']:,.2f} {t['src']}→{t['dst']} ({t['reason']})")
+                    src = tlabel(t["src"], t.get("src_terminal"))
+                    dst = tlabel(t["dst"], t.get("dst_terminal"))
+                    send(f"💸 TRANSFER: move ${t['amount']:,.2f}  {src} → {dst}  ({t['reason']})")
             if s["halted"] and not was_halted:
                 send(f"🛑 CIRCUIT BREAKER — DD {s['drawdown']*100:.1f}%. New ops halted. /resume to clear.")
             was_halted = s["halted"]
             now_stale = {a["name"] for a in s["accounts"] if a["stale"]}
             for n in now_stale - stale:
-                send(f"⚠️ {n} heartbeat STALE (terminal/EA down?).")
+                send(f"⚠️ {tlabel(n, term.get(n))} heartbeat STALE (terminal/EA down?).")
             stale = now_stale
         except Exception:
             pass
