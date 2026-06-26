@@ -40,10 +40,10 @@ chk("session -> / serves dashboard", (lambda x: x.status_code == 200 and "crossk
 c.post("/logout")
 chk("after logout /status -> 401", c.get("/status").status_code == 401)
 
-# --- Basic auth still works for API/curl (fresh client, no cookie) ---
+# --- cached Basic-auth creds must NOT bypass the login page (the reported bug) ---
 c2 = TestClient(A.app)
 b = base64.b64encode(b"alice:s3cret").decode()
-chk("Basic auth -> /status 200 (API path)", c2.get("/status", headers={"Authorization": "Basic " + b}).status_code == 200)
+chk("Basic auth REJECTED (no login bypass)", c2.get("/status", headers={"Authorization": "Basic " + b}).status_code == 401)
 
 print(f"\n{sum(P)}/{len(P)} passed")
 raise SystemExit(0 if all(P) else 1)

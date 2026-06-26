@@ -24,6 +24,9 @@
   .chartwrap{position:relative;width:100%;max-width:440px;margin:8px auto 0}
   .chartrow{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
   @media(max-width:820px){.chartrow{grid-template-columns:1fr}}
+  .acct-layout{display:grid;grid-template-columns:1fr 330px;gap:22px;align-items:start}
+  .acct-layout .side{min-width:0}
+  @media(max-width:900px){.acct-layout{grid-template-columns:1fr}}
   ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:#222c3e;border-radius:8px;border:2px solid var(--bg)}
   a{color:var(--accent)}
   .app{display:grid;grid-template-columns:236px 1fr;min-height:100vh}
@@ -194,10 +197,16 @@
 
     <main>
       <section class="card tab" data-tab="accounts">
-        <h2>Capital allocation</h2>
-        <div class="chartwrap"><canvas id="allocChart" height="240"></canvas></div>
-        <h2 class="mt">Accounts — balance vs target</h2>
-        <div id="accts" class="grid"></div>
+        <div class="acct-layout">
+          <div class="main-col">
+            <h2>Accounts — balance vs target</h2>
+            <div id="accts" class="grid"></div>
+          </div>
+          <div class="side">
+            <h2>Capital allocation</h2>
+            <div class="chartwrap"><canvas id="allocChart" height="260"></canvas></div>
+          </div>
+        </div>
       </section>
 
       <section class="card tab hidden" data-tab="perf"><h2>Performance — combined (R units)</h2>

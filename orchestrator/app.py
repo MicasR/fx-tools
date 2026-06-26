@@ -6,7 +6,6 @@ import os
 import copy
 import time
 import hmac
-import base64
 import hashlib
 import secrets
 from fastapi import FastAPI, Response, HTTPException
@@ -53,18 +52,6 @@ def _is_m2m(path: str) -> bool:
             or path == "/control" or path.startswith("/control/"))
 
 
-def _basic_ok(request) -> bool:
-    hdr = request.headers.get("authorization", "")
-    if not hdr.startswith("Basic "):
-        return False
-    try:
-        user, _, pw = base64.b64decode(hdr[6:].strip()).decode("utf-8").partition(":")
-    except Exception:
-        return False
-    return (secrets.compare_digest(user, DASH_USER)
-            and secrets.compare_digest(pw, DASH_PASS))
-
-
 # Stateless signed session cookie set by the /login form. The signing secret is derived from the
 # creds, so cookies survive a uvicorn restart (no server-side store) yet rotate automatically if
 # the password changes -- invalidating every old session.
@@ -97,8 +84,9 @@ def _gate(request):
     if path in ("/login", "/logout"):
         return None                                  # public; POST /login validates creds itself
     # The VPS itself (EAs, the Telegram bot, ops scripts on 127.0.0.1) is trusted. Remote callers
-    # need a valid login session cookie (browser) or HTTP Basic (curl/API -- no popup, no realm).
-    if local or _valid_session(request) or _basic_ok(request):
+    # MUST have a valid login session cookie. Basic auth is intentionally NOT accepted: browsers
+    # cache Basic creds and resend them silently, which would bypass the /login page.
+    if local or _valid_session(request):
         return None
     if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
         return RedirectResponse("/login", status_code=302)   # send browsers to the login page
