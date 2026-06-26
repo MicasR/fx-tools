@@ -94,7 +94,7 @@
   .card h2{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--mut);margin:0 0 14px;font-weight:600}
   .card h2.mt{margin-top:20px}
 
-  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,200px),1fr))}
   .acct{background:linear-gradient(180deg,var(--card2),var(--inset));border:1px solid var(--ln);border-radius:var(--r2);padding:13px;min-width:0}
   .acct .top{display:flex;justify-content:space-between;align-items:center;gap:6px;min-width:0}
   .acct .nm{font-weight:700;display:flex;align-items:center;min-width:0;overflow-wrap:anywhere}
@@ -117,7 +117,7 @@
   .ddwrap>span{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--bad);border-radius:2px}
   .mut{color:var(--mut)} .pos{color:var(--ok)} .neg{color:var(--bad)}
 
-  .statgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:10px}
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr));gap:10px}
   .stat{background:var(--inset);border:1px solid var(--ln);border-radius:var(--r2);padding:11px 13px}
   .stat span{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--mut)}
   .stat b{font-size:18px;font-variant-numeric:tabular-nums;display:block;margin-top:3px}
