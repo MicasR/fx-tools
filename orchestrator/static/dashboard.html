@@ -119,6 +119,10 @@
   #acctTbl .tm{margin-top:2px}
   .xbtn{margin-left:8px;padding:2px 8px;font-size:11px;border-color:rgba(255,107,107,.4);color:var(--bad);background:rgba(255,107,107,.07)}
   .xbtn:hover{background:rgba(255,107,107,.16)}
+  .legfilter{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .legfilter .chip{font-size:11px;padding:3px 10px;border:1px solid var(--ln);border-radius:20px;cursor:pointer;color:var(--fg);user-select:none;transition:.12s}
+  .legfilter .chip:hover{border-color:var(--ln2)}
+  .legfilter .chip.off{opacity:.45;text-decoration:line-through;color:var(--mut)}
 
   .ddwrap{position:relative;width:100%;max-width:150px;height:8px;background:var(--inset);border-radius:20px;margin-top:9px;box-shadow:inset 0 0 0 1px var(--ln)}
   .ddwrap>div{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--warn),var(--bad));border-radius:20px;transition:width .4s}
@@ -213,7 +217,7 @@
         </tr></thead><tbody></tbody><tfoot></tfoot></table></div>
         <div class="chartrow" style="margin-top:18px">
           <div><h2>Capital allocation</h2><div class="chart-box" style="height:280px"><canvas id="allocChart"></canvas></div></div>
-          <div><h2>Balance vs target by leg</h2><div class="chart-box" style="height:280px"><canvas id="btChart"></canvas></div></div>
+          <div><h2>Balance vs target by leg</h2><div id="btFilter" class="legfilter"></div><div class="chart-box" style="height:280px"><canvas id="btChart"></canvas></div></div>
         </div>
       </section>
 
@@ -267,6 +271,7 @@ let chart, ddChart, allocChart, legRChart, btChart, lastRsig=null, lastMsig=null
 let seenXfer=new Set(), staleSet=new Set(), wasHalted=false, firstStatus=true;
 const CLOSE_ENABLED=false;   // per-leg "Close all" button — flip to true AFTER the EA close-cmd build is deployed
 let closing=new Set();       // accounts with an in-flight manual close (drives the 'closing…' state)
+let btHidden=new Set(), btAccts=[];   // leg filter for the balance-vs-target chart (hidden legs + last accounts)
 const PAL=['#5b8cff','#2fd98b','#a78bfa','#22d3ee','#ffc857','#ff6b6b','#f472b6','#fb923c'];
 const GRID='#212a3b', TICK='#8793a6';
 const TABNAME={accounts:'Overview',perf:'Performance',xfer:'Transfers',settings:'Settings',events:'Events'};
@@ -432,9 +437,20 @@ function drawAlloc(accts){
 }
 
 // ---- balance vs target by leg (grouped horizontal bars; companion to the allocation doughnut) ----
+function renderLegFilter(accts){
+  const f=$('btFilter'), sig=accts.map(a=>a.name).join('|');
+  if(f.dataset.sig===sig) return;            // legs unchanged -> keep chips (off-state toggled on click)
+  f.dataset.sig=sig;
+  f.innerHTML=accts.map(a=>{
+    const lab=(a.terminal&&a.terminal.tn)?a.terminal.tn:a.name;
+    return `<span class="chip${btHidden.has(a.name)?' off':''}" data-leg="${a.name}" title="${a.name}">${lab}</span>`;
+  }).join('');
+}
 function drawBalTarget(accts){
-  const labels=accts.map(a=>(a.terminal&&a.terminal.tn)?a.terminal.tn:a.name);
-  const bal=accts.map(a=>Math.max(0,a.balance)), tgt=accts.map(a=>Math.max(0,a.target||0));
+  btAccts=accts; renderLegFilter(accts);
+  const shown=accts.filter(a=>!btHidden.has(a.name));
+  const labels=shown.map(a=>(a.terminal&&a.terminal.tn)?a.terminal.tn:a.name);
+  const bal=shown.map(a=>Math.max(0,a.balance)), tgt=shown.map(a=>Math.max(0,a.target||0));
   if(btChart && btChart.data.labels.join('|')===labels.join('|')){
     btChart.data.datasets[0].data=bal; btChart.data.datasets[1].data=tgt; btChart.update('none'); return;
   }
@@ -508,6 +524,14 @@ $('acctTbl').addEventListener('click',e=>{
   modal('Close all open positions?',
     `<p class="mut">Flatten <b>${acct}</b> now — close every open position on this leg and realize its current P&amp;L immediately. Picked up on the leg's next heartbeat. The leg can still re-arm on the next signal; use <b>Halt</b> to stop new ops.</p>`,
     ()=>{ closing.add(acct); return fetch('/close/'+encodeURIComponent(acct),{method:'POST'}); });
+});
+
+// ---- balance-vs-target leg filter (chips toggle legs in/out of that chart only) ----
+$('btFilter').addEventListener('click',e=>{
+  const c=e.target.closest('.chip'); if(!c) return;
+  const leg=c.dataset.leg;
+  btHidden.has(leg)?btHidden.delete(leg):btHidden.add(leg);
+  c.classList.toggle('off'); drawBalTarget(btAccts);
 });
 
 // ---- settings ----
