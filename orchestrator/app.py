@@ -21,6 +21,8 @@ db = DB(os.environ.get("CK_DB", "orchestrator/state.db"))   # CK_DB lets tests u
 cfg.apply_overrides(db.get_settings())                # restore owner's persisted live settings
 breaker = Breaker()
 _START = time.time()
+CLOSE_CMD = {}                # in-memory per-account one-shot "flatten now" command (war room)
+CLOSE_TTL_S = 90             # auto-expire an unacked close so it can't fire on a later EA restart
 ACCT = {a: Account(a) for a in cfg.accounts}          # in-memory live state
 for name, r in db.accounts().items():                 # warm-start from DB
     if name in ACCT:
@@ -198,6 +200,15 @@ def _rebalance():
     return T, dd, plan
 
 
+def _maybe_clear_close(account, now):
+    """Clear a pending manual-close command once the leg confirms FLAT (it closed), or after
+    CLOSE_TTL_S (so an unacknowledged command can't linger and re-fire on a later EA restart).
+    Called on each telemetry ingest, where ACCT[account].is_open is freshly set."""
+    cmd = CLOSE_CMD.get(account)
+    if cmd and (not ACCT[account].is_open or now - cmd["ts"] > CLOSE_TTL_S):
+        CLOSE_CMD.pop(account, None)
+
+
 def _ingest_telemetry(t: Telemetry):
     if t.account not in ACCT:
         return {"ok": False, "error": "unknown account"}
@@ -209,6 +220,7 @@ def _ingest_telemetry(t: Telemetry):
     db.add_telemetry(ts=now, account=t.account, symbol=t.symbol, balance=bal,
                      equity=eq, is_open=int(t.is_open), dir=t.dir, stack=t.stack,
                      open_r=t.open_r, ml_sl=t.ml_sl, ver=t.ver)
+    _maybe_clear_close(t.account, now)
     T, dd, _ = _rebalance()
     return {"ok": True, "halt": breaker.halted, "T": round(T, 2), "dd": round(dd, 4)}
 
@@ -254,10 +266,13 @@ def op_close_get(account: str, symbol: str = "", realized_r: float = 0.0, positi
 def control(account: str):
     """EA polls this every heartbeat; trade execution continues if the orchestrator is down
     (fail-open). The poll is also proof-of-life: refresh last_hb so a leg that is alive and
-    talking (even before its first telemetry lands) shows live on the dashboard."""
+    talking (even before its first telemetry lands) shows live on the dashboard.
+    `close_id` is a one-shot manual 'flatten now' command (0 = none); the EA acts once per
+    NEW id it sees, then ignores it -- a lingering id never re-fires."""
     if account in ACCT:
         ACCT[account].last_ctrl = time.time()      # proof-of-life only (NOT balance freshness)
-    return {"halt": breaker.halted}
+    cmd = CLOSE_CMD.get(account)
+    return {"halt": breaker.halted, "close_id": cmd["id"] if cmd else 0}
 
 
 @app.post("/halt")
@@ -268,6 +283,23 @@ def halt():
 @app.post("/resume")
 def resume():
     breaker.clear(); db.log("control", "manual RESUME"); return {"halted": False}
+
+
+@app.post("/close/{account}")
+def close_account(account: str):
+    """Manual one-shot 'flatten this leg NOW' (war room). Sets a close command the EA reads on
+    its next /control poll and acts on once; the EA's normal book-empty -> OnOpClosed() path
+    then realizes R and resets. Cleared when the leg reports flat (or after CLOSE_TTL_S).
+    This is the ONLY orchestrator->execution command path -- manual + optional: if the
+    orchestrator is down you simply close in MT5 directly, so execution autonomy is preserved.
+    NOTE: 'close' flattens current positions only; it does NOT stop re-entry -- use /halt for
+    that. Auth: not an m2m path, so the gate requires a valid dashboard session (like /halt)."""
+    if account not in ACCT:
+        raise HTTPException(status_code=404, detail="unknown account")
+    cid = int(time.time() * 1000)
+    CLOSE_CMD[account] = {"id": cid, "ts": time.time()}
+    db.log("control", f"manual CLOSE-ALL {account} (cmd {cid})")
+    return {"ok": True, "account": account, "close_id": cid}
 
 
 @app.get("/status")

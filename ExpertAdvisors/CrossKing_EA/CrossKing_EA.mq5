@@ -146,6 +146,7 @@ datetime g_last_h1   = 0;      // last processed entry-TF (H1) bar
 datetime g_last_mgmt = 0;      // last processed chart-TF management bar
 datetime g_last_hb   = 0;      // last heartbeat send
 bool     g_halt      = false;  // orchestrator "no new ops" flag (polled; fail-open)
+long     g_last_close_id = 0;  // last manual CLOSE-ALL command id acted on (one-shot dedup)
 
 //--- cached specs
 double   g_TR  = 0.0;          // $ P&L per 1.0 price move per 1.0 lot
@@ -1088,13 +1089,58 @@ void SendState()
    char res[]; HttpGet(q, res);
 }
 
-// Poll the orchestrator "no new ops" flag. FAIL-OPEN: on any error g_halt is left unchanged
-// (trade execution never depends on the orchestrator being reachable).
+// Read the integer immediately after `key` in a flat JSON string (no real JSON parser needed
+// here -- the orchestrator returns small flat objects). Returns 0 if the key is absent.
+long ParseLong(const string body, const string key)
+{
+   int p = StringFind(body, key);
+   if(p < 0) return 0;
+   p += StringLen(key);
+   int len = StringLen(body);
+   while(p < len && StringGetCharacter(body, p) == ' ') p++;   // skip spaces after the colon
+   int start = p;
+   while(p < len)
+   {
+      ushort c = StringGetCharacter(body, p);
+      if(c < '0' || c > '9') break;
+      p++;
+   }
+   if(p == start) return 0;
+   return (long)StringToInteger(StringSubstr(body, start, p - start));
+}
+
+// Manual flatten (war-room "Close all"): close every position for this leg + cancel pendings.
+// We deliberately DON'T touch op state here -- the next OnTick sees the empty book
+// (g_inop && cnt==0) and runs OnOpClosed(), which realizes R from the balance delta, reports
+// /op_close, and resets. Re-entry is NOT blocked (that is what /halt is for).
+void CloseAllNow()
+{
+   PrintFormat("[CrossKing:%s] MANUAL CLOSE-ALL -> flattening book", InpLegName);
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong tk = PositionGetTicket(i);
+      if(tk == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != (long)InpMagicNumber) continue;
+      g_trade.PositionClose(tk);
+   }
+   DeletePendings(0);   // cancel any resting breakout stops too
+}
+
+// Poll the orchestrator "no new ops" flag + one-shot manual CLOSE-ALL command. FAIL-OPEN: on
+// any error g_halt is left unchanged (trade execution never depends on the orchestrator).
 void PollControl()
 {
    char res[];
-   if(HttpGet("/control/" + InpLegName, res) == 200)
-      g_halt = (StringFind(CharArrayToString(res, 0, WHOLE_ARRAY, CP_UTF8), "\"halt\":true") >= 0);
+   if(HttpGet("/control/" + InpLegName, res) != 200) return;
+   string body = CharArrayToString(res, 0, WHOLE_ARRAY, CP_UTF8);
+   g_halt = (StringFind(body, "\"halt\":true") >= 0);
+   long cid = ParseLong(body, "\"close_id\":");      // 0 = no command pending
+   if(cid > g_last_close_id)                          // act once per NEW id (one-shot dedup)
+   {
+      g_last_close_id = cid;
+      if(cid > 0) CloseAllNow();
+   }
 }
 
 // Heartbeat on a wall-clock timer (set in OnInit) -> reliable cadence independent of ticks.
