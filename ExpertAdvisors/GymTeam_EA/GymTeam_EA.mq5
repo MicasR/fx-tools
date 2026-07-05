@@ -72,7 +72,9 @@ enum ENUM_CK_SIZING  { CK_PROGGEO = 0, CK_GEOFLOOR = 1 };          // stack add-
 enum ENUM_CK_ADDTRIG { ADD_SMA_BOUNCE = 0, ADD_POSCANDLE = 1 };    // when an add arms (RSI_RECOVERY reserved)
 enum ENUM_CK_LINE    { LINE_MARGIN = 0, LINE_NBACK = 1, LINE_PINPREV = 2 }; // add liquidation anchor
 enum ENUM_GT_SIGNAL  { SIG_VPATTERN = 0, SIG_NR7 = 1, SIG_INSIDE = 2,      // the signal modules
-                       SIG_NR7_OR_INSIDE = 3, SIG_WARMHOURS = 4 };
+                       SIG_NR7_OR_INSIDE = 3, SIG_WARMHOURS = 4,
+                       SIG_KELTNER = 5, SIG_ENGULF = 6,                    // thread-36 live-mechanics
+                       SIG_DONCHIAN = 7, SIG_MA_ALIGN = 8 };               // survivors (fat-bar family)
 
 input group              "== Leg identity / preset =="
 input string             InpLegName       = "JPY_H4_nr7";   // Leg name (telemetry)
@@ -91,6 +93,13 @@ input string             InpWHHours       = "12,13,14,15,16"; // warm+hours: all
 input double             InpWHLo          = 80.0;           // warm+hours: vol_pct > this
 input double             InpWHHi          = 98.0;           // warm+hours: vol_pct <= this
 input int                InpWHPctWin      = 100;            // warm+hours: percentile window (incl current bar)
+input int                InpKelP          = 20;             // Keltner: EMA period
+input double             InpKelMult       = 2.0;            // Keltner: ATR multiple
+input int                InpATRP          = 14;             // ATR period (SMA of TR; Keltner/ma_align)
+input int                InpDonP          = 55;             // Donchian lookback
+input int                InpAlignFast     = 10;             // ma_align: fast SMA
+input int                InpAlignSlow     = 50;             // ma_align: slow SMA
+input double             InpAlignImp      = 1.2;            // ma_align: impulse rng > x*ATR
 
 input group              "== Management core (the preset knobs) =="
 input ENUM_TIMEFRAMES    InpMgmtTF        = PERIOD_M15;       // Management TF: bounce/add/trail cadence (gold M15, BTC H1)
@@ -1020,6 +1029,10 @@ bool IsTriggerBar()
       case SIG_INSIDE:        return IsInside(1);
       case SIG_NR7_OR_INSIDE: return IsNR(1) || IsInside(1);   // "comp" (union of fires)
       case SIG_WARMHOURS:     return IsWarmHours(1);
+      case SIG_KELTNER:       return IsKeltner();
+      case SIG_ENGULF:        return IsEngulf();
+      case SIG_DONCHIAN:      return IsDonchian();
+      case SIG_MA_ALIGN:      return IsMaAlign();
       default:                return IsVPattern();
    }
 }
@@ -1073,6 +1086,120 @@ bool IsWarmHours(int sh)
    MqlDateTime dt;
    TimeToStruct(iTime(_Symbol, InpEntryTF, sh), dt);
    return g_wh_hours[dt.hour];
+}
+
+//+------------------------------------------------------------------+
+//| Entry-TF price helpers (manual, CrossKing style; pandas-matched). |
+//+------------------------------------------------------------------+
+double SmaCloseEntry(int period, int shift)
+{
+   double c[];
+   if(CopyClose(_Symbol, InpEntryTF, shift, period, c) < period) return 0.0;
+   double s = 0; for(int i = 0; i < period; i++) s += c[i];
+   return s / period;
+}
+
+// EMA(close) as pandas ewm(span, adjust=False): recursive from a long warmup
+double EmaCloseEntry(int period, int shift, int warm = 300)
+{
+   int need = shift + warm;
+   double c[]; ArraySetAsSeries(c, true);
+   if(CopyClose(_Symbol, InpEntryTF, 0, need, c) < need) return 0.0;
+   double k = 2.0 / (period + 1);
+   double e = c[need - 1];
+   for(int i = need - 2; i >= shift; i--) e = k * c[i] + (1.0 - k) * e;
+   return e;
+}
+
+// ATR = SMA of true range over `period`, ending at `shift` (pandas tr.rolling(p).mean())
+double AtrSmaEntry(int period, int shift)
+{
+   int need = shift + period + 1;
+   double h[], l[], c[];
+   ArraySetAsSeries(h, true); ArraySetAsSeries(l, true); ArraySetAsSeries(c, true);
+   if(CopyHigh(_Symbol, InpEntryTF, 0, need, h) < need) return 0.0;
+   if(CopyLow(_Symbol, InpEntryTF, 0, need, l) < need) return 0.0;
+   if(CopyClose(_Symbol, InpEntryTF, 0, need, c) < need) return 0.0;
+   double s = 0;
+   for(int i = shift; i < shift + period; i++)
+   {
+      double tr = MathMax(h[i] - l[i], MathMax(MathAbs(h[i] - c[i + 1]), MathAbs(l[i] - c[i + 1])));
+      s += tr;
+   }
+   return s / period;
+}
+
+//+------------------------------------------------------------------+
+//| Keltner break: close crosses out of EMA(P) +/- mult*ATR (edge:    |
+//| outside now, not outside on the previous bar). Either side fires. |
+//+------------------------------------------------------------------+
+bool IsKeltner()
+{
+   double atr1 = AtrSmaEntry(InpATRP, 1), atr2 = AtrSmaEntry(InpATRP, 2);
+   if(atr1 <= 0 || atr2 <= 0) return false;
+   double e1 = EmaCloseEntry(InpKelP, 1), e2 = EmaCloseEntry(InpKelP, 2);
+   if(e1 <= 0 || e2 <= 0) return false;
+   double c1 = iClose(_Symbol, InpEntryTF, 1), c2 = iClose(_Symbol, InpEntryTF, 2);
+   bool up1 = c1 > e1 + InpKelMult * atr1, up2 = c2 > e2 + InpKelMult * atr2;
+   bool dn1 = c1 < e1 - InpKelMult * atr1, dn2 = c2 < e2 - InpKelMult * atr2;
+   return (up1 && !up2) || (dn1 && !dn2);
+}
+
+//+------------------------------------------------------------------+
+//| Engulfing (both directions; matches signals2 formula exactly).    |
+//+------------------------------------------------------------------+
+bool IsEngulf()
+{
+   double c1 = iClose(_Symbol, InpEntryTF, 1), o1 = iOpen(_Symbol, InpEntryTF, 1);
+   double c2 = iClose(_Symbol, InpEntryTF, 2), o2 = iOpen(_Symbol, InpEntryTF, 2);
+   bool b = (c1 > o1) && (c2 < o2) && (c1 > o2) && (o1 < c2);
+   bool s = (c1 < o1) && (c2 > o2) && (c1 < o2) && (o1 > c2);
+   return b || s;
+}
+
+//+------------------------------------------------------------------+
+//| Donchian break: close crosses the prior InpDonP-bar extreme (edge |
+//| vs the previous bar's same condition). Either side fires.         |
+//+------------------------------------------------------------------+
+bool IsDonchian()
+{
+   int need = InpDonP + 3;
+   double h[], l[], c[];
+   ArraySetAsSeries(h, true); ArraySetAsSeries(l, true); ArraySetAsSeries(c, true);
+   if(CopyHigh(_Symbol, InpEntryTF, 0, need, h) < need) return false;
+   if(CopyLow(_Symbol, InpEntryTF, 0, need, l) < need) return false;
+   if(CopyClose(_Symbol, InpEntryTF, 0, need, c) < need) return false;
+   double hh1 = h[2], ll1 = l[2], hh2 = h[3], ll2 = l[3];
+   for(int i = 2; i < 2 + InpDonP; i++)      { hh1 = MathMax(hh1, h[i]); ll1 = MathMin(ll1, l[i]); }
+   for(int i = 3; i < 3 + InpDonP && i < need; i++) { hh2 = MathMax(hh2, h[i]); ll2 = MathMin(ll2, l[i]); }
+   bool up1 = c[1] > hh1, up2 = c[2] > hh2;
+   bool dn1 = c[1] < ll1, dn2 = c[2] < ll2;
+   return (up1 && !up2) || (dn1 && !dn2);
+}
+
+//+------------------------------------------------------------------+
+//| MA-alignment impulse: close vs slow SMA, both SMAs rising/falling,|
+//| bar range > imp*ATR (edge vs previous bar's condition).           |
+//+------------------------------------------------------------------+
+int AlignCond(int sh)   // +1 up-aligned impulse, -1 down, 0 neither
+{
+   double sl1 = SmaCloseEntry(InpAlignSlow, sh), sl2 = SmaCloseEntry(InpAlignSlow, sh + 1);
+   double f1 = SmaCloseEntry(InpAlignFast, sh), f2 = SmaCloseEntry(InpAlignFast, sh + 1);
+   if(sl1 <= 0 || sl2 <= 0 || f1 <= 0 || f2 <= 0) return 0;
+   double atr = AtrSmaEntry(InpATRP, sh);
+   if(atr <= 0) return 0;
+   double c = iClose(_Symbol, InpEntryTF, sh);
+   double rng = iHigh(_Symbol, InpEntryTF, sh) - iLow(_Symbol, InpEntryTF, sh);
+   if(rng <= InpAlignImp * atr) return 0;
+   if((c > sl1) && (sl1 > sl2) && (f1 > f2)) return 1;
+   if((c < sl1) && (sl1 < sl2) && (f1 < f2)) return -1;
+   return 0;
+}
+
+bool IsMaAlign()   // per-side rising edge (matches signals2._dir_sig)
+{
+   int a1 = AlignCond(1), a2 = AlignCond(2);
+   return (a1 == 1 && a2 != 1) || (a1 == -1 && a2 != -1);
 }
 
 //+------------------------------------------------------------------+
