@@ -654,7 +654,27 @@ void OnOpOpened(const double &entries[], const double &lots[])
    g_op_open_time = TimeCurrent();
    RefreshSpecs();
    DeletePendings(g_dir == 1 ? 2 : 1);      // cancel the sibling
-   double stop, tp; ComputeStops(entries, lots, stop, tp);
+   // ---- base TOP-UP (VOL_MAX completion, spec'd 2026-07-06) ----
+   // The pending's per-order cap can truncate the base below the pin lot
+   // E0/(TR*r0); with LINE_MARGIN stops an undersized base pushes the -1R
+   // line ~pin/base wider — a different trade. At cent scale (1 lot =
+   // 0.01 std) the cap binds ~100x earlier than standard ($31 gold-H4:
+   // pin up to ~980 lots). Complete the base at market: slippage only on
+   // the excess slice; margin-capped like any add.
+   double pin_lot = (g_TR > 0 && g_r0 > 0) ? QFloor(g_E0 / (g_TR * g_r0)) : 0.0;
+   double P_cur = SymbolInfoDouble(_Symbol, g_dir == 1 ? SYMBOL_ASK : SYMBOL_BID);
+   double shortfall = MarginCap(pin_lot - g_base_lot, entries, lots, P_cur, g_dir, g_E0);
+   if(shortfall >= VOL_MIN)
+   {
+      int n_top = PlaceSplit(g_dir == 1, shortfall, "CK_" + InpLegName + "_topup");
+      if(n_top > 0)
+         PrintFormat("[GymTeam:%s] BASE TOP-UP +%.2f in %d order(s) (base %.2f -> pin %.2f)",
+                     InpLegName, shortfall, n_top, g_base_lot, pin_lot);
+   }
+   double e_all[], l_all[];                  // re-scan: stops must cover the completed base
+   ScanBook(e_all, l_all);
+   g_base_lot = SumLots(l_all);              // geometric add unit = the COMPLETED base
+   double stop, tp; ComputeStops(e_all, l_all, stop, tp);
    ApplyStopAll(stop, tp);
    PrintFormat("[GymTeam:%s] OP OPEN dir=%d e0=%.5f R=%.5f E0=%.2f", InpLegName, g_dir, g_e0, g_r0, g_E0);
    TelemetryOp("open");
