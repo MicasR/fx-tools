@@ -1,14 +1,19 @@
-# CrossKing KING — Deployment Runbook
+# TESTER-TRUE BOOK — Deployment Runbook (v2, 2026-07-06)
 
-End-to-end setup to take the crowned **KING** (GROWTH-6 weight-opt) from repo → live, per
-`SYSTEM_PLAN.md`. Model: **EA-dumb / orchestrator-brain**, 7 accounts (6 ops + 1 Main),
-semi-manual cash sweeps. Work top-to-bottom; each section states its **Objective** and the
-**Deliverables** you should have before moving on.
+End-to-end setup to take the **tester-true 6-leg book** (fx_gym
+`docs/TESTERTRUE_TEAM_SPEC.md` — supersedes the PD3 KING; never quote king/PROM3 numbers)
+from repo → live. Model unchanged: **EA-dumb / orchestrator-brain**, 7 accounts
+(6 ops + 1 Main), semi-manual cash sweeps. Work top-to-bottom; each section states its
+**Objective** and the **Deliverables** you should have before moving on.
 
 > **Golden rules**
 > - Trading never depends on the orchestrator (control poll is fail-open). It's safe to start EAs before the brain.
-> - **Deploy on the honest number: bootstrap-median ≈ 12×, NOT the $41k headline** (`SYSTEM_PLAN.md §12`).
-> - Demo first, then $100 (mechanics), then $1000. Kill-triggers armed throughout.
+> - **Deploy on the honest numbers: holdout 3.26×/5.6mo at full f is the OPTIMISTIC ceiling
+>   (window read ~3×); the live shakedown is the real test. P&L is not the shakedown criterion.**
+> - Demo smoke first, then the $100 cent shakedown (mechanics), then the $10k standard migration.
+>   The falsifiability contract (spec §contract, 6 triggers) is armed from the first fill.
+> - EA binary: the 2026-07-06 base-TOP-UP build — **cent-validation gate PASSED 6/6**
+>   (e100 runs reproduce archives exactly; see `run_topup_validation.ps1`).
 > - Secrets (account passwords, Telegram token) live in a `.env` on the VPS — **never commit them.**
 
 ---
@@ -34,18 +39,20 @@ semi-manual cash sweeps. Work top-to-bottom; each section states its **Objective
 **Deliverables:** a table of 7 logins (number / password / server) saved to your password manager
 (and later the VPS `.env`), each set to **leverage 1:2000**, account currency **USD**.
 
-1. In your Exness Personal Area, create **7 MT5 accounts** (Standard or the c-symbol type you
-   backtested — symbols must be `XAUUSDc` / `BTCUSDc`, matching the research):
-   | terminal | account role | preset | symbol/chart |
-   |---|---|---|---|
-   | T1 | ops `PD3_BtcTrail_1` | PD3_BtcTrail_1.set | BTCUSDc H1 |
-   | T2 | ops `PD3_GoldGeo_0` | PD3_GoldGeo_0.set | XAUUSDc H1 (mgmt M15) |
-   | T3 | ops `PD3_BtcTrail_4` | PD3_BtcTrail_4.set | BTCUSDc H1 |
-   | T4 | ops `PD3_BtcNb_2` | PD3_BtcNb_2.set | BTCUSDc H1 |
-   | T5 | ops `PD3_BtcPin_5` | PD3_BtcPin_5.set | BTCUSDc H1 |
-   | T6 | ops `PD3_GoldGeo_3` | PD3_GoldGeo_3.set | XAUUSDc H1 (mgmt M15) |
-   | T7 | **Main** reporter | (telemetry only) | any (no trading) |
-2. Set every account to **1:2000 leverage** (the add-cap math assumes it) and **USD**.
+1. In your Exness Personal Area, create **7 MT5 CENT accounts** (the c-suffix symbol type the
+   entire research stack runs on — `XAUUSDc`/`BTCUSDc`; 1 USD = 100 USc, cent lot = 0.01 std;
+   spec §topology, cent-validation gate PASSED at these fundings):
+   | terminal | account role | preset (GymTeam_EA) | magic | chart | funding |
+   |---|---|---|---|---|---|
+   | T1 | ops `XAU_H4_align` | XAU_H4_align.set | 20260713 | XAUUSDc **H4** | $33 = 3,300 USc |
+   | T2 | ops `XAU_H4_engulf` | XAU_H4_engulf.set | 20260712 | XAUUSDc **H4** | $31 |
+   | T3 | ops `BTC_wh_shield` | BTC_wh_shield.set | 20260707 | BTCUSDc **H1** | $16 |
+   | T4 | ops `XAU_H4_keltner` | XAU_H4_keltner.set | 20260710 | XAUUSDc **H4** | $10 |
+   | T5 | ops `XAU_H1_don55` | XAU_H1_don55.set | 20260714 | XAUUSDc **H1** | $6 |
+   | T6 | ops `XAU_H1_keltner` | XAU_H1_keltner.set | 20260711 | XAUUSDc **H1** | $4 |
+   | T7 | **Main** reporter | (telemetry only) | — | any (no trading) | rebalance hub |
+2. Set every account to **1:2000 leverage** (MarginCap math assumes it) and account currency
+   **USc (cent)**.
 3. Record login / investor-password-NO-use-master / server name for each. Confirm `XAUUSDc` and
    `BTCUSDc` exist in Market Watch on these accounts.
 
@@ -126,26 +133,30 @@ If both test suites pass on the VPS, the brain is healthy on this box.
 **Objective:** one terminal per account, each auto-logging in and running the right EA+preset, with
 WebRequest allowed to the orchestrator.
 
-**Deliverables:** 7 terminals open, each logged into its account, the correct chart up, `CrossKing_EA`
-attached with its `PD3_*.set`, and a smiley (EA enabled). Main runs telemetry only.
+**Deliverables:** 7 terminals open, each logged into its account, the correct chart up, `GymTeam_EA`
+attached with its leg `.set`, and a smiley (EA enabled). Main runs telemetry only.
 
 1. Install MT5 **7 times as portable** (separate folders `C:\ck\mt5\T1 … T7`, each launched with
    the `/portable` flag so each keeps its own data dir + login).
 2. In each terminal: **File ▸ Login to Trade Account** → that account's login/password/server.
    Enable **Tools ▸ Options ▸ auto-login** so it reconnects on reboot.
-3. Deploy the EA: copy `ExpertAdvisors/CrossKing_EA/CrossKing_EA.ex5` to each terminal's
-   `MQL5\Experts\`, and the matching `PD3_*.set` to `MQL5\Presets\` (or load it from the chart's
-   Inputs tab). *Or* junction the project folder (see `reference_mt5_junction_setup` pattern).
+3. Deploy the EA: copy `ExpertAdvisors/GymTeam_EA/GymTeam_EA.ex5` (the top-up build, cent-gate
+   PASSED) to each terminal's `MQL5\Experts\`, and the matching set file from
+   `ExpertAdvisors/GymTeam_EA/presets/` to `MQL5\Presets\` (or load it from the chart's Inputs
+   tab). *Or* junction the project folder (the research terminal uses exactly this pattern:
+   `MQL5\Experts\GymTeam_EA -> <repo>\ExpertAdvisors\GymTeam_EA`).
 4. **WebRequest whitelist** (each terminal): Tools ▸ Options ▸ Expert Advisors ▸ *Allow WebRequest
    for listed URL* → add the orchestrator base, e.g. `http://127.0.0.1:8800` (same box) or
    `http://<VPS-LAN-IP>:8800`.
-5. Attach EA to the right chart per the §1 table (gold → XAUUSDc H1 chart; BTC → BTCUSDc H1). In the
+5. Attach EA to the right chart per the §1 table — **chart TF must match the preset's
+   `InpEntryTF`** (H4 for align/engulf/keltner-H4; H1 for shield/don55/keltner-H1). In the
    EA Inputs set **`InpTelemetryURL` = the orchestrator base url**. Leave `InpFixedE0=0` (live = whole
    account balance), `InpTROverride=0`, `InpMPLOverride=0` (read live). Enable **Algo Trading**.
+   Do NOT copy anything from tester inis (their fixed E0 is validation-only).
 6. Main (T7): attach the EA (or a reporter) with `InpLegName=Main` and `InpTelemetryURL` set; it
    reports balance only (it won't trade if you give it no trading preset / disable its entries).
 
-> Verify each shows a 🙂 and prints the `[CrossKing:<leg>] init` line in the Experts log.
+> Verify each shows a 🙂 and prints the `[GymTeam:<leg>] init` line in the Experts log.
 
 ---
 
@@ -156,10 +167,11 @@ attached with its `PD3_*.set`, and a smiley (EA enabled). Main runs telemetry on
 **Deliverables:** `http://<VPS>:8800/` shows the control center; all 7 accounts appear (green dots)
 within a heartbeat; it survives a reboot.
 
-1. Configure `orchestrator/config.py` (or env): set **`f_total`** = the deployment risk budget
-   (shakedown: hot, e.g. 0.20–0.30; $1000 live: ~0.054 for the 24%-DD design point), **`breaker_dd`**
-   (0.35 shakedown / 0.80 live), `min_transfer` (e.g. $0.50 shakedown / scale up later). Confirm the
-   6 leg account ids equal your `InpLegName`s and weights match `PD3_KING_manifest.md`.
+1. `orchestrator/config.py` already carries the tester-true roster (22/22 tests green,
+   2026-07-06): weights 33/31/16/10/6/4, **`f_total=1.0`** (the spec's cent topology funds the
+   whole $100 into ops; de-risk trigger #3 = drop f_total to 0.5, parking half in Main),
+   **`breaker_dd=0.30`** (contract trigger #2), `min_transfer` $0.50 for the shakedown.
+   Confirm the 6 leg account ids equal your `InpLegName`s (they are the spec leg names).
 2. Run it: `uvicorn orchestrator.app:app --host 0.0.0.0 --port 8800`.
 3. **Auto-start + watchdog:** wrap it as a Windows *Scheduled Task* (or NSSM service) set to run at
    boot and restart on failure. (Linux: a `systemd` unit with `Restart=always`.)
@@ -213,9 +225,10 @@ the R-stream chart gets a point and `/op_close` is logged; a win produces a pend
 **Deliverables:** Main holds the reserve; each ops-account holds `W_i · F_total · T` (the dashboard
 "target" matches the actual balance, bars full).
 
-- **Phase D — $100 shakedown (hot, mechanics test):** deposit ~$100 to Main. With a hot `f_total`
-  (e.g. 0.25), targets are tiny (cents–dollars); the point is to watch **mechanics**, not P&L. Move
-  cash Main→ops per the dashboard targets / Telegram instructions.
+- **Phase D — $100 cent shakedown:** deposit $100 to Main, then move to ops per the §1 table
+  ($33/$31/$16/$10/$6/$4 — the dashboard targets equal these at `f_total=1.0`, T=$100). Every
+  leg sizes cleanly at cent granularity (validated: `tools/centval_compare.py` 6/6 PASS). The
+  point is **mechanics**, not P&L.
 - The orchestrator never moves money — it *instructs*; you execute the internal transfer in the
   Exness Personal Area and the next balance heartbeat confirms it (logged to the transfers audit).
 - Transfer lag is safe: an un-topped account just opens a smaller op.
@@ -228,13 +241,18 @@ the R-stream chart gets a point and `/op_close` is logged; a win produces a pend
 
 **Deliverables:** a clean Phase-D shakedown log, then a funded $1000 run.
 
-- **Phase D — $100 @ hot f, breaker 35%.** Exit = mechanics correct over the run (EAs size/floor
-  right, open-op lock holds, transfers fire & confirm, dashboard/alerts track, no unexplained
-  behaviour). **P&L is not the criterion.**
-- **Phase E — $1000 @ f≈1% (f_total≈0.054), breaker 80%, add a BTC weekend-gap cash buffer.**
-- **Kill-triggers (any → de-risk/halt, don't rationalize — `SYSTEM_PLAN.md §12`):** realized DD
-  > ~30%; monster frequency < ~1/quarter; any rolling 3-month live segment < ~−5R; aggressive-leg
-  live-vs-tester divergence > ~15%. **Expectation = ~12× over ~2.4yr, not the headline.**
+- **Phase D — $100 cent shakedown, breaker 30%.** Exit = mechanics correct over the run (fills,
+  base top-up firing where pin > cap, open-op lock holds, transfers fire & confirm,
+  dashboard/alerts track, live-vs-shadow < 15% per leg via `fx_gym tools/compare_shadow.py`).
+  **P&L is not the criterion.**
+- **Phase E — $10k standard-account migration** (same weights: $3.3k/$3.1k/$1.6k/$1k/$600/$400;
+  per-order cap is 200 STD lots there — never binds). Same presets, same magics.
+- **Kill-triggers (pre-committed, any → act, don't rationalize — spec §FALSIFIABILITY):**
+  (1) leg rolling-quarter < −12R → bench it; (2) book DD > 30% → halt new ops; (3) positive-week
+  rate < 40% over 13wk → de-risk 50%; (4) live-vs-shadow > 15% on a leg → halt, investigate;
+  (5) realized cost/op > 2× tester → de-risk that leg; (6) 4 XAU legs negative in the same
+  quarter → halt gold book, shield continues. **Quote holdout 3.26×/5.6mo as the optimistic
+  ceiling, nothing higher.**
 
 ---
 

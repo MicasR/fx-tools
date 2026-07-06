@@ -35,21 +35,21 @@ st = client.get("/status").json()
 chk("status T ~= 1000", abs(st["T"] - 1000) < 1.0)
 chk("not halted at start", st["halted"] is False)
 chk("no pending transfers on-target", len(st["pending_transfers"]) == 0)
-chk("biggest target = btc-trail-1 ~33.8", any(abs(a["target"] - 33.8) < 0.6
-    and a["name"] == "PD3_BtcTrail_1" for a in st["accounts"]))
+chk("biggest target = XAU_H4_align ~33.0", any(abs(a["target"] - 33.0) < 0.6
+    and a["name"] == "XAU_H4_align" for a in st["accounts"]))
 
 # a leg wins (flat, balance above target) -> orchestrator should emit a sweep to Main
-r = tele("PD3_GoldGeo_0", round(tg["PD3_GoldGeo_0"] + 25, 2))
+r = tele("XAU_H4_engulf", round(tg["XAU_H4_engulf"] + 25, 2))
 chk("telemetry returns halt flag + T", "halt" in r and "T" in r)
 st = client.get("/status").json()
-sweep = [t for t in st["pending_transfers"] if t["src"] == "PD3_GoldGeo_0" and t["reason"] == "sweep"]
-chk("win -> pending sweep gold-geo-0 -> main", len(sweep) == 1)
+sweep = [t for t in st["pending_transfers"] if t["src"] == "XAU_H4_engulf" and t["reason"] == "sweep"]
+chk("win -> pending sweep engulf -> main", len(sweep) == 1)
 
 # op close records an immutable R-stream row
-client.post("/op_close", json=dict(account="PD3_GoldGeo_0", realized_r=2.5, positions=4,
+client.post("/op_close", json=dict(account="XAU_H4_engulf", realized_r=2.5, positions=4,
             reason="TP", close_time=1.0))
 st = client.get("/status").json()
-chk("op_close -> rstream has the row", any(o["account"] == "PD3_GoldGeo_0" and
+chk("op_close -> rstream has the row", any(o["account"] == "XAU_H4_engulf" and
     abs(o["realized_r"] - 2.5) < 1e-6 for o in st["rstream"]))
 
 # control flag fail-open; manual halt/resume
