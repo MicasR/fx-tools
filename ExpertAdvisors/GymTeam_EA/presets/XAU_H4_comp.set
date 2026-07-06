@@ -1,0 +1,39 @@
+; GymTeam preset -- XAU_H4_comp (PROM-3 crown leg 2; fx_gym docs/PROM3_TEAM_SPEC.md)
+; Attach to: XAUUSDc chart, H4 timeframe. Signal FROZEN: NR7 -- "comp" = nr7 UNION
+; nr7&inside, and nr7&inside is a subset of nr7, so the comp fire set IS nr7.
+; Breakout OCO 4-bar, structural SL, TP3, max-hold 240 H4 bars.
+; Tester validation: set InpFixedE0=100.0, compare vs fx_gym out/shadow/XAU_H4_comp.csv (<15%).
+InpLegName=XAU_H4_comp
+InpMagicNumber=20260706
+InpSignal=1
+InpEntryTF=16388
+InpBreakBars=4
+InpMaxHoldBars=240
+InpNRWindow=7
+InpMAPeriod=20
+InpMultiplier=2.0
+InpRisePct=0.02
+InpWHHours=12,13,14,15,16
+InpWHLo=80.0
+InpWHHi=98.0
+InpWHPctWin=100
+InpMgmtTF=16388
+InpStack=false
+InpSizing=0
+InpSmaP=7
+InpSlowP=0
+InpMult=0.01
+InpProgStep=1.7
+InpHalf=0.5
+InpTpR=3.0
+InpTrailR=0.0
+InpAddTrigger=0
+InpLinePlace=0
+InpNBack=0
+InpLineBuffer=0.0
+InpFixedE0=0.0
+InpTROverride=0.0
+InpMPLOverride=0.0
+InpDeviation=50
+InpTelemetryURL=
+InpHeartbeatSec=30

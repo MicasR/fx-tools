@@ -40,29 +40,29 @@ st = client.get("/status").json()
 chk("status T ~= 1000", abs(st["T"] - 1000) < 1.0)
 chk("not halted at start", st["halted"] is False)
 chk("no pending transfers on-target", len(st["pending_transfers"]) == 0)
-chk("biggest target = btc-trail-1 ~33.8", any(abs(a["target"] - 33.8) < 0.6
-    and a["name"] == "PD3_BtcTrail_1" for a in st["accounts"]))
+chk("biggest target = XAU_H4_align ~33.0", any(abs(a["target"] - 33.0) < 0.6
+    and a["name"] == "XAU_H4_align" for a in st["accounts"]))
 
 # a leg wins (flat, balance above target) -> orchestrator should emit a sweep to Main
-r = tele("PD3_GoldGeo_0", round(tg["PD3_GoldGeo_0"] + 25, 2))
+r = tele("XAU_H4_engulf", round(tg["XAU_H4_engulf"] + 25, 2))
 chk("telemetry returns halt flag + T", "halt" in r and "T" in r)
 st = client.get("/status").json()
-sweep = [t for t in st["pending_transfers"] if t["src"] == "PD3_GoldGeo_0" and t["reason"] == "sweep"]
-chk("win -> pending sweep gold-geo-0 -> main", len(sweep) == 1)
+sweep = [t for t in st["pending_transfers"] if t["src"] == "XAU_H4_engulf" and t["reason"] == "sweep"]
+chk("win -> pending sweep engulf -> main", len(sweep) == 1)
 
-# simulate executing that sweep in Exness: gold-geo-0 back to target, Main now holds the +25.
+# simulate executing that sweep in Exness: the engulf leg back to target, Main now holds the +25.
 # next telemetry must reconcile the pending instruction out (it is no longer needed).
-tele("PD3_GoldGeo_0", round(tg["PD3_GoldGeo_0"], 2))
+tele("XAU_H4_engulf", round(tg["XAU_H4_engulf"], 2))
 tele("Main", round(T0 - sum(tg.values()) + 25, 2))
 st = client.get("/status").json()
 chk("executed transfer -> reconciled out of pending",
-    not any(t["src"] == "PD3_GoldGeo_0" and t["reason"] == "sweep" for t in st["pending_transfers"]))
+    not any(t["src"] == "XAU_H4_engulf" and t["reason"] == "sweep" for t in st["pending_transfers"]))
 
 # op close records an immutable R-stream row
-client.post("/op_close", json=dict(account="PD3_GoldGeo_0", realized_r=2.5, positions=4,
+client.post("/op_close", json=dict(account="XAU_H4_engulf", realized_r=2.5, positions=4,
             reason="TP", close_time=1.0))
 st = client.get("/status").json()
-chk("op_close -> rstream has the row", any(o["account"] == "PD3_GoldGeo_0" and
+chk("op_close -> rstream has the row", any(o["account"] == "XAU_H4_engulf" and
     abs(o["realized_r"] - 2.5) < 1e-6 for o in st["rstream"]))
 
 # control flag fail-open; manual halt/resume
@@ -78,7 +78,7 @@ for l in A.cfg.legs:
 tele("Main", 1.0, eq=1.0)
 chk("breaker trips on >35% equity crater", client.get("/status").json()["halted"] is True)
 
-# performance metrics report (one op_close happened above: PD3_GoldGeo_0 R=2.5)
+# performance metrics report (one op_close happened above: XAU_H4_engulf R=2.5)
 m = client.get("/metrics").json()
 chk("/metrics has combined + per_leg", "combined" in m and "per_leg" in m)
 chk("/metrics counts the closed op", m["combined"]["trades"] == 1 and abs(m["combined"]["net_r"] - 2.5) < 1e-6)
@@ -86,15 +86,15 @@ chk("/metrics counts the closed op", m["combined"]["trades"] == 1 and abs(m["com
 # live settings: dry_run must NOT mutate; apply must shift weights + persist
 g = client.get("/settings").json()
 chk("/settings exposes weights + dials", "weights" in g and "f_total" in g)
-w0 = g["weights"]["PD3_BtcTrail_1"]
+w0 = g["weights"]["XAU_H4_align"]
 body = dict(f_total=g["f_total"], breaker_dd=g["breaker_dd"], min_transfer=g["min_transfer"],
             heartbeat_timeout_s=g["heartbeat_timeout_s"],
-            weights={k: (0.5 if k == "PD3_BtcTrail_1" else 0.1) for k in g["weights"]})
+            weights={k: (0.5 if k == "XAU_H4_align" else 0.1) for k in g["weights"]})
 dry = client.post("/settings?dry_run=1", json=body).json()
 chk("dry_run returns preview + leaves live config unchanged",
-    "preview" in dry and abs(client.get("/settings").json()["weights"]["PD3_BtcTrail_1"] - w0) < 1e-9)
+    "preview" in dry and abs(client.get("/settings").json()["weights"]["XAU_H4_align"] - w0) < 1e-9)
 client.post("/settings", json=body)
-chk("apply raises BtcTrail_1 weight", client.get("/settings").json()["weights"]["PD3_BtcTrail_1"] > w0)
+chk("apply raises align weight", client.get("/settings").json()["weights"]["XAU_H4_align"] > w0)
 bad = dict(body); bad["f_total"] = 1.5
 chk("invalid f_total -> 400", client.post("/settings", json=bad).status_code == 400)
 
