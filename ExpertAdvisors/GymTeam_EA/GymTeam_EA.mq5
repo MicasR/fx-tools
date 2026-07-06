@@ -206,7 +206,8 @@ int OnInit()
    {
       g_ops_fh = FileOpen("gt_ops_" + InpLegName + ".csv", FILE_WRITE | FILE_TXT | FILE_ANSI);
       if(g_ops_fh != INVALID_HANDLE)
-         FileWrite(g_ops_fh, "open_time,close_time,dir,positions,realizedR");
+         FileWrite(g_ops_fh, "open_time,close_time,dir,positions,realizedR,"
+                             "entry_px,exit_px,lots,profit,swap,commission,E0,r0");
    }
    RefreshSpecs();
    PrintFormat("[GymTeam:%s] init  sym=%s chartTF=%s signal=%s entryTF=%s mgmtTF=%s  stack=%d sizing=%d "
@@ -670,10 +671,38 @@ void OnOpClosed()
    int _wk = (int)((TimeCurrent() - CK_EPOCH) / CK_WEEKSEC);                          // prom-date bucket
    if(_wk >= 0 && _wk < CK_NWEEK) g_week[_wk] += MathMax(realizedR, -1.0);            // NBP-clamped
    if(g_ops_fh != INVALID_HANDLE)                                                     // shadow-gate op log
-      FileWrite(g_ops_fh, StringFormat("%s,%s,%d,%d,%.4f",
-                TimeToString(g_op_open_time, TIME_DATE | TIME_MINUTES),
-                TimeToString(TimeCurrent(),  TIME_DATE | TIME_MINUTES),
-                g_dir, g_add_count + 1, realizedR));
+   {
+      // deal-accurate op record for the cent-level oracle reconciliation:
+      // sum this op's deals (by magic, since op open) -> profit/swap/commission,
+      // entry price (first IN deal), exit price (last OUT deal), total IN lots.
+      double d_profit = 0, d_swap = 0, d_comm = 0, d_lots = 0, d_in = 0, d_out = 0;
+      if(HistorySelect(g_op_open_time - 120, TimeCurrent() + 120))
+      {
+         for(int i = 0; i < HistoryDealsTotal(); i++)
+         {
+            ulong tk = HistoryDealGetTicket(i);
+            if(tk == 0) continue;
+            if(HistoryDealGetInteger(tk, DEAL_MAGIC) != (long)InpMagicNumber) continue;
+            if(HistoryDealGetString(tk, DEAL_SYMBOL) != _Symbol) continue;
+            d_profit += HistoryDealGetDouble(tk, DEAL_PROFIT);
+            d_swap   += HistoryDealGetDouble(tk, DEAL_SWAP);
+            d_comm   += HistoryDealGetDouble(tk, DEAL_COMMISSION);
+            long entry = HistoryDealGetInteger(tk, DEAL_ENTRY);
+            if(entry == DEAL_ENTRY_IN)
+            {
+               if(d_in == 0) d_in = HistoryDealGetDouble(tk, DEAL_PRICE);
+               d_lots += HistoryDealGetDouble(tk, DEAL_VOLUME);
+            }
+            else if(entry == DEAL_ENTRY_OUT)
+               d_out = HistoryDealGetDouble(tk, DEAL_PRICE);
+         }
+      }
+      FileWrite(g_ops_fh, StringFormat("%s,%s,%d,%d,%.4f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f,%.2f,%.5f",
+                TimeToString(g_op_open_time, TIME_DATE | TIME_SECONDS),
+                TimeToString(TimeCurrent(),  TIME_DATE | TIME_SECONDS),
+                g_dir, g_add_count + 1, realizedR,
+                d_in, d_out, d_lots, d_profit, d_swap, d_comm, g_E0, g_r0));
+   }
    PrintFormat("[GymTeam:%s] OP CLOSE  R=%.3f  bal=%.2f", InpLegName, realizedR, bal);
    TelemetryOpClose(realizedR);
    g_inop = false; g_dir = 0; g_e0 = g_r0 = g_E0 = g_ext = 0; g_ok = false; g_arm_b = false;
