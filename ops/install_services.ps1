@@ -25,4 +25,8 @@ function Register-CKTask($Name, $Script) {
 
 Register-CKTask "CrossKing-Orchestrator" (Join-Path $Root "ops\run_orchestrator.ps1")
 Register-CKTask "CrossKing-Bot"          (Join-Path $Root "ops\run_bot.ps1")
+# NOTE: the collector is NOT a Scheduled Task. MT5 needs the INTERACTIVE desktop session, and a
+# task (or a hidden-window supervisor) runs session-isolated -> mt5.initialize fails with
+# "IPC initialize failed, Process create failed". The collector must launch in the interactive
+# logon session (see ops/RUNBOOK.md "Collector"). Left unregistered on purpose.
 Write-Host "done. Start now with: Start-ScheduledTask -TaskName CrossKing-Orchestrator"
