@@ -58,10 +58,71 @@ def handle(cmd):
     return "commands: /status /halt /resume /kill"
 
 
+ORCH_FAIL_ALERT = 24        # consecutive failed /status polls (~2 min at 5s) before alerting
+
+
+class AlertState:
+    """Edge-detection memory between poll cycles — every alert fires once per transition."""
+    def __init__(self):
+        self.seen_xfer = set()
+        self.was_halted = False
+        self.stale = set()          # leg names stale last cycle
+        self.all_stale = False      # full-outage latch (collector/terminals down)
+        self.orch_fails = 0         # consecutive /status failures
+        self.orch_down = False      # unreachable alert already sent
+
+
+def status_alerts(st, s):
+    """PURE (no I/O): fold one /status snapshot into `st` and return this cycle's alert messages.
+    `s` is the /status dict, or None when the orchestrator was unreachable. The 2026-07-07..10
+    incident (collector dead 3 days, dashboard blind, nobody paged) is what the all-stale
+    escalation + recovery messages exist for."""
+    msgs = []
+    if s is None:
+        st.orch_fails += 1
+        if st.orch_fails >= ORCH_FAIL_ALERT and not st.orch_down:
+            st.orch_down = True
+            msgs.append("🚨 ORCHESTRATOR UNREACHABLE — /status failing. Dashboard + alerts blind. "
+                        "Check CrossKing-Orchestrator task.")
+        return msgs
+    if st.orch_down:
+        msgs.append("✅ orchestrator reachable again.")
+    st.orch_fails, st.orch_down = 0, False
+
+    term = {a["name"]: a.get("terminal") for a in s["accounts"]}
+    for t in s.get("pending_transfers", []):
+        if t["id"] not in st.seen_xfer:
+            st.seen_xfer.add(t["id"])
+            src = tlabel(t["src"], t.get("src_terminal"))
+            dst = tlabel(t["dst"], t.get("dst_terminal"))
+            msgs.append(f"💸 TRANSFER: move ${t['amount']:,.2f}  {src} → {dst}  ({t['reason']})")
+    if s["halted"] and not st.was_halted:
+        msgs.append(f"🛑 CIRCUIT BREAKER — DD {s['drawdown']*100:.1f}%. New ops halted. /resume to clear.")
+    elif st.was_halted and not s["halted"]:
+        msgs.append("✅ breaker cleared — running.")
+    st.was_halted = s["halted"]
+
+    names = {a["name"] for a in s["accounts"]}
+    now_stale = {a["name"] for a in s["accounts"] if a["stale"]}
+    all_stale = bool(names) and now_stale == names
+    if all_stale and not st.all_stale:
+        msgs.append(f"🚨 ALL {len(names)} LEGS STALE — collector or terminals down; the dashboard "
+                    "is blind (trading unaffected). Fix per ops/RUNBOOK.md 'Collector'.")
+    elif st.all_stale and not all_stale:
+        msgs.append(f"✅ telemetry restored — {len(names - now_stale)}/{len(names)} legs alive.")
+    elif not all_stale:                       # per-leg edges (a full outage is one alert, not 7)
+        for n in sorted(now_stale - st.stale):
+            msgs.append(f"⚠️ {tlabel(n, term.get(n))} heartbeat STALE (terminal/EA down?).")
+        for n in sorted(st.stale - now_stale):
+            msgs.append(f"✅ {tlabel(n, term.get(n))} heartbeat back.")
+    st.stale, st.all_stale = now_stale, all_stale
+    return msgs
+
+
 def run():
     send("CrossKing bot online.")
     offset = 0
-    seen_xfer, was_halted, stale = set(), False, set()
+    st = AlertState()
     while True:
         try:                                            # commands
             r = httpx.get(f"{TG}/getUpdates", params={"offset": offset, "timeout": 20}, timeout=30).json()
@@ -70,26 +131,15 @@ def run():
                 msg = (u.get("message") or {}).get("text", "")
                 if msg.startswith("/"):
                     send(handle(msg))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[bot] getUpdates failed: {e}")
+        s = None
         try:                                            # alerts off /status
             s = httpx.get(f"{ORCH}/status", timeout=10).json()
-            term = {a["name"]: a.get("terminal") for a in s["accounts"]}
-            for t in s.get("pending_transfers", []):
-                if t["id"] not in seen_xfer:
-                    seen_xfer.add(t["id"])
-                    src = tlabel(t["src"], t.get("src_terminal"))
-                    dst = tlabel(t["dst"], t.get("dst_terminal"))
-                    send(f"💸 TRANSFER: move ${t['amount']:,.2f}  {src} → {dst}  ({t['reason']})")
-            if s["halted"] and not was_halted:
-                send(f"🛑 CIRCUIT BREAKER — DD {s['drawdown']*100:.1f}%. New ops halted. /resume to clear.")
-            was_halted = s["halted"]
-            now_stale = {a["name"] for a in s["accounts"] if a["stale"]}
-            for n in now_stale - stale:
-                send(f"⚠️ {tlabel(n, term.get(n))} heartbeat STALE (terminal/EA down?).")
-            stale = now_stale
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[bot] /status failed: {e}")
+        for m in status_alerts(st, s):
+            send(m)
         time.sleep(5)
 
 
