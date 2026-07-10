@@ -19,6 +19,13 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+.venv/
+
+# runtime output (supervisor logs already covered by *.log)
+ops/*.out
+ops/*.err
+ops/_measure.txt
+ops/backups/
 
 # secrets (NEVER commit)
 terminals.xlsx
@@ -28,3 +35,4 @@ vps.txt
 secrets/
 ~$*
 orchestrator/terminals.json
+orchestrator/secrets.json
