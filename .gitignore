@@ -2,6 +2,8 @@
 
 # MT5 compiled binaries
 *.ex5
+# ...except the GymTeam signal indicators: versioned deliverables, drag-and-drop ready
+!Indicators/GymTeam/*.ex5
 
 # MetaEditor backups and temp files
 *.bak
