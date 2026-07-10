@@ -180,6 +180,7 @@ datetime g_last_h1   = 0;      // last processed entry-TF (H1) bar
 datetime g_last_mgmt = 0;      // last processed chart-TF management bar
 datetime g_last_hb   = 0;      // last heartbeat send
 bool     g_halt      = false;  // orchestrator "no new ops" flag (polled; fail-open)
+long     g_last_close_id = 0;  // last manual CLOSE-ALL command id acted on (one-shot dedup)
 
 //--- signal-module state / shadow-gate op log
 bool     g_wh_hours[24];       // warm+hours allowed-hour lookup (parsed from InpWHHours)
@@ -217,11 +218,14 @@ int OnInit()
                InpMult, InpProgStep, InpTpR, InpTrailR, InpMaxHoldBars, g_TR, g_MPL);
    // adopt an already-open op (restart safety): if positions exist, resume managing.
    AdoptExistingOp();
+   // wall-clock heartbeat (ticks are unreliable off-session): drives telemetry + control poll.
+   if(TelemetryEnabled()) EventSetTimer(MathMax(1, InpHeartbeatSec));
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason)
 {
+   EventKillTimer();
    if(g_ops_fh != INVALID_HANDLE) { FileClose(g_ops_fh); g_ops_fh = INVALID_HANDLE; }
 }
 
@@ -610,7 +614,7 @@ void OnTick()
       ApplyStopAll(stop, tp);
    }
 
-   Heartbeat(cnt);
+   // heartbeat/telemetry now runs on OnTimer (wall clock) -- reliable when ticks are sparse.
 
    // ----- entry cadence: new H1 bar -> detect + arm (only when flat) -----
    datetime h1b = iTime(_Symbol, InpEntryTF, 0);
@@ -1299,19 +1303,25 @@ bool TelemetryEnabled()
    return (InpTelemetryURL != "" && !(bool)MQLInfoInteger(MQL_TESTER));
 }
 
-// POST `body` to InpTelemetryURL + path (base URL = the orchestrator, no trailing slash).
-void PushJson(string path, string body)
+// GET `InpTelemetryURL + pathq` (base URL = the orchestrator, no trailing slash). We use GET, not
+// POST: MT5 WebRequest runs on WinINet, whose keep-alive pool fails on reused POSTs (err=5203 --
+// non-idempotent, so WinINet won't retry on a stale handle) while it self-heals GETs. A unique
+// &_=tick cache-buster stops WinINet from caching/reusing a stale connection. Result -> `result`.
+int HttpGet(string pathq, char &result[])
 {
-   if(!TelemetryEnabled()) return;
-   char post[], result[]; string headers = "Content-Type: application/json\r\n", rhdr;
-   StringToCharArray(body, post, 0, StringLen(body), CP_UTF8);
-   int sz = ArraySize(post); if(sz > 0) ArrayResize(post, sz - 1);   // drop trailing NUL
-   int code = WebRequest("POST", InpTelemetryURL + path, headers, 5000, post, result, rhdr);
-   if(code == -1) PrintFormat("[GymTeam:%s] WebRequest %s failed err=%d (whitelist the URL)",
-                              InpLegName, path, GetLastError());
+   if(!TelemetryEnabled()) return -1;
+   char data[]; string rhdr;
+   string sep = (StringFind(pathq, "?") >= 0) ? "&" : "?";
+   string url = InpTelemetryURL + pathq + sep + "_=" + (string)GetTickCount();
+   ResetLastError();
+   int code = WebRequest("GET", url, "", 5000, data, result, rhdr);
+   if(code != 200) PrintFormat("[GymTeam:%s] GET %s failed code=%d err=%d",
+                               InpLegName, pathq, code, GetLastError());
+   return code;
 }
 
-// Current account + op state -> POST /telemetry (matches orchestrator Telemetry contract).
+// Current account + op state -> GET /telemetry (query params; matches orchestrator contract).
+// Values are numbers + simple identifiers (leg/symbol have no URL-special chars) -> no encoding.
 void SendState()
 {
    if(!TelemetryEnabled()) return;
@@ -1323,30 +1333,71 @@ void SendState()
       double px = (g_dir == 1) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       openR = g_dir * (px - g_e0) / g_r0;
    }
-   string body = StringFormat("{\"account\":\"%s\",\"symbol\":\"%s\",\"balance\":%.2f,\"equity\":%.2f,"
-                 "\"is_open\":%s,\"dir\":%d,\"stack\":%d,\"open_r\":%.3f,\"ml_sl\":%.5f,\"ver\":\"%s\"}",
-                 InpLegName, _Symbol, AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY),
-                 (g_inop ? "true" : "false"), g_dir, n, openR, ml, "1.0");
-   PushJson("/telemetry", body);
+   string q = StringFormat("/telemetry?account=%s&symbol=%s&balance=%.2f&equity=%.2f"
+              "&is_open=%s&dir=%d&stack=%d&open_r=%.3f&ml_sl=%.5f&ver=%s",
+              InpLegName, _Symbol, AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY),
+              (g_inop ? "true" : "false"), g_dir, n, openR, ml, "1.0");
+   char res[]; HttpGet(q, res);
 }
 
-// Poll the orchestrator "no new ops" flag. FAIL-OPEN: on any error g_halt is left unchanged
-// (trade execution never depends on the orchestrator being reachable).
+// Read the integer immediately after `key` in a flat JSON string (no real JSON parser needed
+// here -- the orchestrator returns small flat objects). Returns 0 if the key is absent.
+long ParseLong(const string body, const string key)
+{
+   int p = StringFind(body, key);
+   if(p < 0) return 0;
+   p += StringLen(key);
+   int len = StringLen(body);
+   while(p < len && StringGetCharacter(body, p) == ' ') p++;   // skip spaces after the colon
+   int start = p;
+   while(p < len)
+   {
+      ushort c = StringGetCharacter(body, p);
+      if(c < '0' || c > '9') break;
+      p++;
+   }
+   if(p == start) return 0;
+   return (long)StringToInteger(StringSubstr(body, start, p - start));
+}
+
+// Manual flatten (war-room "Close all"): close every position for this leg + cancel pendings.
+// We deliberately DON'T touch op state here -- the next OnTick sees the empty book
+// (g_inop && cnt==0) and runs OnOpClosed(), which realizes R from the balance delta, reports
+// /op_close, and resets. Re-entry is NOT blocked (that is what /halt is for).
+void CloseAllNow()
+{
+   PrintFormat("[GymTeam:%s] MANUAL CLOSE-ALL -> flattening book", InpLegName);
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong tk = PositionGetTicket(i);
+      if(tk == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != (long)InpMagicNumber) continue;
+      g_trade.PositionClose(tk);
+   }
+   DeletePendings(0);   // cancel any resting breakout stops too
+}
+
+// Poll the orchestrator "no new ops" flag + one-shot manual CLOSE-ALL command. FAIL-OPEN: on
+// any error g_halt is left unchanged (trade execution never depends on the orchestrator).
 void PollControl()
 {
-   if(!TelemetryEnabled()) return;
-   char data[], result[]; string rhdr;
-   int code = WebRequest("GET", InpTelemetryURL + "/control/" + InpLegName, "", 5000, data, result, rhdr);
-   if(code == 200)
-      g_halt = (StringFind(CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8), "\"halt\":true") >= 0);
+   char res[];
+   if(HttpGet("/control/" + InpLegName, res) != 200) return;
+   string body = CharArrayToString(res, 0, WHOLE_ARRAY, CP_UTF8);
+   g_halt = (StringFind(body, "\"halt\":true") >= 0);
+   long cid = ParseLong(body, "\"close_id\":");      // 0 = no command pending
+   if(cid > g_last_close_id)                          // act once per NEW id (one-shot dedup)
+   {
+      g_last_close_id = cid;
+      if(cid > 0) CloseAllNow();
+   }
 }
 
-void Heartbeat(int cnt)
+// Heartbeat on a wall-clock timer (set in OnInit) -> reliable cadence independent of ticks.
+void OnTimer()
 {
    if(!TelemetryEnabled()) return;
-   datetime now = TimeCurrent();
-   if(now - g_last_hb < InpHeartbeatSec) return;
-   g_last_hb = now;
    SendState();
    PollControl();
 }
@@ -1356,14 +1407,14 @@ void TelemetryOp(string ev)            // op open / add -> immediate state refre
    SendState();
 }
 
-void TelemetryOpClose(double realizedR)   // closed op -> POST /op_close (the live R-stream)
+void TelemetryOpClose(double realizedR)   // closed op -> GET /op_close (the live R-stream)
 {
    if(!TelemetryEnabled()) return;
-   string body = StringFormat("{\"account\":\"%s\",\"symbol\":\"%s\",\"realized_r\":%.4f,"
-                 "\"positions\":%d,\"reason\":\"%s\",\"open_time\":%d,\"close_time\":%d}",
-                 InpLegName, _Symbol, realizedR, g_add_count + 1, "close",
-                 (long)g_op_open_time, (long)TimeCurrent());
-   PushJson("/op_close", body);
+   string q = StringFormat("/op_close?account=%s&symbol=%s&realized_r=%.4f"
+              "&positions=%d&reason=%s&open_time=%d&close_time=%d",
+              InpLegName, _Symbol, realizedR, g_add_count + 1, "close",
+              (long)g_op_open_time, (long)TimeCurrent());
+   char res[]; HttpGet(q, res);
    SendState();                         // refresh balance / flat state post-close
 }
 //+------------------------------------------------------------------+
