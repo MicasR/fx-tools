@@ -455,14 +455,23 @@ async function tick(){
   showBanner(alerts);
 }
 
+// legs are identified by account login everywhere; the HUMAN name (Tn · strategy) lives in the
+// registry and is looked up at render time — never stored on op rows, so a strategy rename or
+// account re-purpose relabels ALL history instantly. Unknown keys (e.g. a removed leg) show raw.
+function legLabel(k){
+  const m=curSet&&curSet.legmeta&&curSet.legmeta[k];
+  return m?((m.tn?m.tn+' · ':'')+(m.strategy||k)):k;
+}
+
 // ---- /metrics (lazy: on Perf tab + every 12s while visible) ----
 async function tickMetrics(){
   let m; try{m=await (await fetch('/metrics')).json()}catch(e){return}
   const sig=JSON.stringify(m); if(sig===lastMsig) return; lastMsig=sig;
-  const c=m.combined, S=(label,val)=>`<div class="stat"><span>${label}</span><b>${val}</b></div>`;
+  const c=m.combined, S=(label,val,cl)=>`<div class="stat"><span>${label}</span><b${cl?` class="${cl}"`:''}>${val}</b></div>`;
+  const rc=v=>v==null?'':(v>=0?'pos':'neg');
   $('mcomb').innerHTML=[
     S('Trades',c.trades), S('Win rate',c.trades?pct(c.win_rate):'—'),
-    S('Net R',r2(c.net_r)), S('Expectancy R',r2(c.expectancy_r)),
+    S('Net R',r2(c.net_r),rc(c.net_r)), S('Expectancy R',r2(c.expectancy_r),rc(c.expectancy_r)),
     S('Profit factor',pf(c.profit_factor)), S('Payoff ratio',pf(c.payoff_ratio)),
     S('Gross win R',r2(c.gross_win_r)), S('Gross loss R',r2(c.gross_loss_r)),
     S('Avg win R',r2(c.avg_win_r)), S('Avg loss R',r2(c.avg_loss_r)),
@@ -473,11 +482,12 @@ async function tickMetrics(){
   ].join('');
   drawLegR(m.per_leg);
   const legs=Object.entries(m.per_leg);
-  $('mleg').querySelector('tbody').innerHTML = legs.length ? legs.map(([k,v])=>
-    `<tr><td>${k}</td><td class="num">${v.trades}</td><td class="num">${pct(v.win_rate)}</td>
+  $('mleg').querySelector('tbody').innerHTML = legs.length ? legs.map(([k,v])=>{
+    const lab=legLabel(k);
+    return `<tr><td>${lab}${lab!==k?`<div class="tm">#${k}</div>`:''}</td><td class="num">${v.trades}</td><td class="num">${pct(v.win_rate)}</td>
      <td class="num ${v.net_r>=0?'pos':'neg'}">${r2(v.net_r)}</td><td class="num">${pf(v.profit_factor)}</td>
-     <td class="num">${r2(v.expectancy_r)}</td><td class="num">${r2(v.max_dd_r)}</td><td class="num">${pf(v.recovery_factor)}</td></tr>`
-  ).join('') : '<tr><td colspan=8 class="mut">no closed ops yet</td></tr>';
+     <td class="num ${v.expectancy_r>=0?'pos':'neg'}">${r2(v.expectancy_r)}</td><td class="num">${r2(v.max_dd_r)}</td><td class="num">${pf(v.recovery_factor)}</td></tr>`;
+  }).join('') : '<tr><td colspan=8 class="mut">no closed ops yet</td></tr>';
 }
 
 // ---- /events (lazy: on Events tab + every 6s while visible) ----
@@ -536,7 +546,7 @@ function drawBalTarget(accts){
 
 // ---- net R by leg (horizontal bars, green/red) ----
 function drawLegR(perLeg){
-  const e=Object.entries(perLeg), labels=e.map(([k])=>k), data=e.map(([,v])=>v.net_r);
+  const e=Object.entries(perLeg), labels=e.map(([k])=>legLabel(k)), data=e.map(([,v])=>v.net_r);
   const colors=data.map(v=>v>=0?'#2fd98b':'#ff6b6b');
   if(legRChart) legRChart.destroy();
   legRChart=new Chart($('legRChart'),{type:'bar',
@@ -553,11 +563,11 @@ function drawR(rs){
   const series=order.map(a=>{let c=0;return rs.map(o=>{if(o.account===a)c+=o.realized_r;return c})});
   const labels=rs.map((_,i)=>i+1);
   drawDD(rs);
-  if(chart && chart.data.datasets.length===order.length+1 && order.every((a,i)=>chart.data.datasets[i].label===a)){
+  if(chart && chart.data.datasets.length===order.length+1 && order.every((a,i)=>chart.data.datasets[i].label===legLabel(a))){
     chart.data.labels=labels; order.forEach((a,i)=>{chart.data.datasets[i].data=series[i]});
     chart.data.datasets[order.length].data=cl; chart.update(); return;
   }
-  const ds=order.map((a,i)=>({label:a,data:series[i],borderColor:PAL[i%PAL.length],borderWidth:1.4,pointRadius:0,tension:.18}));
+  const ds=order.map((a,i)=>({label:legLabel(a),data:series[i],borderColor:PAL[i%PAL.length],borderWidth:1.4,pointRadius:0,tension:.18}));
   ds.push({label:'COMBINED',data:cl,borderColor:'#fff',backgroundColor:'rgba(255,255,255,.06)',fill:true,borderWidth:2.6,pointRadius:0,tension:.18});
   if(chart)chart.destroy();
   chart=new Chart($('rchart'),{type:'line',data:{labels,datasets:ds},
@@ -617,6 +627,7 @@ const DIALS=[['start_capital','Starting capital $ (profit baseline)','1'],
              ['min_transfer','Min transfer $','.01'],['heartbeat_timeout_s','Heartbeat timeout s','1']];
 async function loadSettings(){
   curSet=await (await fetch('/settings')).json();
+  lastRsig=lastMsig=null;      // legmeta (leg display names) may have changed -> force relabel
   $('setForm').innerHTML=DIALS.map(([k,lab,st])=>
     `<div class="set-row"><label>${lab}</label><input id="s_${k}" type="number" step="${st}" value="${curSet[k]}"></div>`).join('');
   const lm=curSet.legmeta||{};
