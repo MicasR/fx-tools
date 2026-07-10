@@ -21,6 +21,9 @@ class Account:
     is_open: bool = False     # True while an op is live (LOCKED -- no transfers)
     last_hb: float = 0.0      # epoch s of last TELEMETRY (fresh balance/equity data)
     last_ctrl: float = 0.0    # epoch s of last CONTROL poll (proof-of-life, no balance)
+    dir: int = 0              # open-op direction: 1 long, -1 short, 0 flat (display only)
+    stack: int = 0            # open position count (display only)
+    open_r: float = 0.0       # floating P&L in R units (display only)
 
     def last_seen(self):
         """Most recent contact of any kind (telemetry or control) -- liveness for the dot."""
@@ -48,8 +51,7 @@ def targets(accounts, cfg, T=None):
     for a in cfg.legs:
         tg[a.account] = a.weight * cfg.f_total * T
         used += tg[a.account]
-    from .config import MAIN
-    tg[MAIN] = T - used                      # reserve
+    tg[cfg.main] = T - used                  # reserve (the Main hub account, keyed by its login)
     return tg
 
 
@@ -57,11 +59,11 @@ def plan_transfers(accounts, cfg, T=None):
     """Event-driven rebalance: return the transfers to fire NOW given current state.
     Only FLAT ops-accounts are trued up; Main is the hub. Top-ups are capped by Main's
     available balance (transfer lag is safe -- EA sizes off actual balance)."""
-    from .config import MAIN
+    main = cfg.main
     if T is None:
         T = total_equity(accounts)
     tg = targets(accounts, cfg, T)
-    main_bal = accounts[MAIN].balance
+    main_bal = accounts[main].balance
     sweeps, topups = [], []
     # 1. sweep wins first (grows Main's funds available for top-ups)
     for a in cfg.legs:
@@ -70,7 +72,7 @@ def plan_transfers(accounts, cfg, T=None):
             continue                          # locked
         delta = acc.balance - tg[a.account]   # >0 = excess (won)
         if delta > cfg.min_transfer:
-            sweeps.append(Transfer(a.account, MAIN, round(delta, 2), "sweep"))
+            sweeps.append(Transfer(a.account, main, round(delta, 2), "sweep"))
             main_bal += delta
     # 2. top up losers from Main (capped by available Main balance)
     for a in cfg.legs:
@@ -81,7 +83,7 @@ def plan_transfers(accounts, cfg, T=None):
         if need > cfg.min_transfer:
             give = min(need, max(0.0, main_bal - cfg.min_transfer))
             if give > cfg.min_transfer:
-                topups.append(Transfer(MAIN, a.account, round(give, 2), "topup"))
+                topups.append(Transfer(main, a.account, round(give, 2), "topup"))
                 main_bal -= give
     return sweeps + topups
 

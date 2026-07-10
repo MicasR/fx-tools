@@ -65,6 +65,12 @@
   .halt{padding:7px 14px;border-radius:9px;font-weight:700;font-size:12px;letter-spacing:.5px;white-space:nowrap}
   .halt.on{background:rgba(255,107,107,.14);color:var(--bad);box-shadow:inset 0 0 0 1px rgba(255,107,107,.5)}
   .halt.off{background:rgba(47,217,139,.12);color:var(--ok);box-shadow:inset 0 0 0 1px rgba(47,217,139,.4)}
+  .conn{font-size:11px;font-weight:600;letter-spacing:.4px;padding:6px 11px;border-radius:20px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .conn.ok{background:rgba(47,217,139,.1);color:var(--ok);box-shadow:inset 0 0 0 1px rgba(47,217,139,.3)}
+  .conn.lost{background:rgba(255,107,107,.14);color:var(--bad);box-shadow:inset 0 0 0 1px rgba(255,107,107,.5);animation:connpulse 1.2s ease-in-out infinite}
+  @keyframes connpulse{50%{opacity:.55}}
+  /* the numbers on screen are only as fresh as the link — dim everything when it's gone */
+  body.nolink .kpis,body.nolink main{opacity:.5;filter:saturate(.5);transition:opacity .3s}
   button{font:inherit;cursor:pointer;border-radius:9px;border:1px solid var(--ln);background:var(--card2);color:var(--fg);
          padding:7px 13px;font-weight:600;transition:.12s}
   button:hover{border-color:var(--ln2);transform:translateY(-1px)}
@@ -107,6 +113,8 @@
   .dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)} .dot.stale{background:var(--bad);box-shadow:0 0 8px var(--bad)} .dot.nodata{background:var(--warn)}
   .badge{font-size:10px;font-weight:700;letter-spacing:.5px;padding:3px 8px;border-radius:20px;text-transform:uppercase}
   .badge.open{background:rgba(91,140,255,.16);color:var(--blue)} .badge.flat{background:#1c2433;color:var(--mut)}
+  .badge.long{background:rgba(47,217,139,.16);color:var(--ok)} .badge.short{background:rgba(255,107,107,.16);color:var(--bad)}
+  tr.stale-row td{opacity:.55}
   .bar{height:8px;background:var(--inset);border-radius:20px;overflow:hidden;margin-top:11px;box-shadow:inset 0 0 0 1px var(--ln)}
   .bar>div{height:100%;border-radius:20px;background:linear-gradient(90deg,var(--accent),var(--violet));transition:width .4s}
   .row{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-top:8px} .row b{color:var(--fg);font-variant-numeric:tabular-nums}
@@ -138,6 +146,15 @@
   .set-row label{flex:0 0 230px;color:var(--mut);font-size:13px}
   .set-row input{flex:1;max-width:180px;background:var(--inset);border:1px solid var(--ln);border-radius:9px;color:var(--fg);padding:8px 11px;font:inherit}
   .set-row input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,140,255,.15)}
+  .afgrid{display:grid;grid-template-columns:1fr 1fr;gap:13px 16px;margin-top:4px}
+  .afgrid label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--mut)}
+  .afgrid input{background:var(--inset);border:1px solid var(--ln);border-radius:9px;color:var(--fg);padding:9px 11px;font:inherit}
+  .afgrid input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,140,255,.15)}
+  .afgrid input:disabled{opacity:.5}
+  .afgrid .afwide{grid-column:1/3}
+  .afgrid .afchk{flex-direction:row;align-items:center;gap:8px;margin-top:4px}
+  .acctbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+  @media(max-width:560px){.afgrid{grid-template-columns:1fr}.afgrid .afwide{grid-column:1}}
   .sep{height:1px;background:var(--ln);margin:16px 0}
 
   .feed{max-height:62vh;overflow:auto}
@@ -190,6 +207,7 @@
       <h1>Overview</h1>
       <div class="spacer"></div>
       <div class="controls">
+        <div id="conn" class="conn lost">connecting…</div>
         <label class="sndtog"><input type="checkbox" id="snd"><span>🔔 Sound</span></label>
         <button id="btnHalt" class="danger">■ Halt</button>
         <button id="btnResume" class="go">▶ Resume</button>
@@ -210,7 +228,10 @@
 
     <main>
       <section class="card tab" data-tab="accounts">
-        <h2>Accounts — live state (balance · equity · floating P&amp;L)</h2>
+        <div class="acctbar" style="margin-bottom:12px">
+          <h2 style="margin:0">Accounts — live state (balance · equity · floating P&amp;L)</h2>
+          <button id="btnAddAcct" class="primary">+ Add account</button>
+        </div>
         <div style="overflow-x:auto"><table id="acctTbl"><thead><tr>
           <th>account</th><th>status</th><th class="num">balance</th><th class="num">equity</th>
           <th class="num">floating P&amp;L</th><th class="num">target</th><th class="num">Δ target</th>
@@ -250,7 +271,7 @@
           <button id="btnReload">Reload</button>
           <button id="btnPreview" class="primary">Preview &amp; apply…</button>
         </div>
-        <p class="mut" style="font-size:12px;margin-top:12px">Changes apply to live trading immediately on confirm and persist across restarts. A retune can trigger transfers on the next telemetry — the preview shows what.</p>
+        <p class="mut" style="font-size:12px;margin-top:12px">Changes apply to live trading immediately on confirm and persist across restarts. A retune can trigger transfers on the next telemetry — the preview shows what. To add / remove / rename accounts, use <b>+ Add account</b> and the ✎ button on the Accounts tab.</p>
       </section>
 
       <section class="card tab hidden" data-tab="events"><h2>Event log</h2><div id="feed" class="feed"></div></section>
@@ -261,6 +282,26 @@
 <div class="modal" id="modal"><div class="box">
   <h3 id="mTitle">Confirm</h3><div id="mBody"></div>
   <div class="actions"><button id="mCancel">Cancel</button><button id="mOk" class="primary">Confirm</button></div>
+</div></div>
+
+<div class="modal" id="acctModal"><div class="box">
+  <h3 id="acctTitle">Add account</h3>
+  <div class="afgrid">
+    <label>Terminal (Tn)<input id="f_tn" placeholder="e.g. T8"></label>
+    <label>Account login #<input id="f_login" placeholder="161600000"></label>
+    <label>Broker server<input id="f_server" placeholder="Exness-MT5Real21"></label>
+    <label>Symbol<input id="f_symbol" placeholder="XAUUSDc"></label>
+    <label>Strategy label <span style="font-weight:400;opacity:.7">— rename anytime</span><input id="f_strategy" placeholder="(optional)"></label>
+    <label>Weight<input id="f_weight" type="number" step=".01" min="0" placeholder="0.10"></label>
+    <label class="afwide">MT5 password <span style="font-weight:400;opacity:.7">— lets the collector read this account · saved to secrets.json, never shown</span><input id="f_pw" type="password" autocomplete="new-password" placeholder="required for a new account"></label>
+    <label class="afwide">Terminal path <span style="font-weight:400;opacity:.7">— for open / close from the dashboard</span><input id="f_term" placeholder="C:\Program Files\MetaTrader 5 - T8\terminal64.exe"></label>
+    <label class="afchk"><input type="checkbox" id="f_cents" checked> cent account (USC)</label>
+  </div>
+  <div class="actions">
+    <button id="f_remove" class="danger" style="margin-right:auto;display:none">Remove</button>
+    <button id="f_cancel">Cancel</button>
+    <button id="f_save" class="primary">Save</button>
+  </div>
 </div></div>
 
 <script>
@@ -310,11 +351,26 @@ function tlabel(term,name){
   return s;
 }
 
+// ---- link freshness (the 07-07..10 lesson: stale numbers must LOOK stale) ----
+let lastOk=0;
+const ago=s=>{ if(s==null) return '—'; s=Math.max(0,Math.round(s));
+  return s<60?s+'s':s<3600?Math.floor(s/60)+'m':s<86400?Math.floor(s/3600)+'h':Math.floor(s/86400)+'d'; };
+function connPill(){
+  const c=$('conn'), dt=(Date.now()-lastOk)/1000;
+  if(!lastOk){ c.className='conn lost'; c.textContent='connecting…'; return; }
+  const lost=dt>10;
+  c.className='conn '+(lost?'lost':'ok');
+  c.textContent=lost?'NO LINK · '+ago(dt):'live · '+ago(dt);
+  document.body.classList.toggle('nolink',lost);
+}
+setInterval(connPill,1000);
+
 // ---- /status (3s) ----
 async function tick(){
-  let r; try{r=await fetch('/status')}catch(e){return}
+  let r; try{r=await fetch('/status')}catch(e){connPill();return}
   if(r.status===401){ location.href='/login'; return; }   // session expired -> back to login
-  let s; try{s=await r.json()}catch(e){return}
+  let s; try{s=await r.json()}catch(e){connPill();return}
+  lastOk=Date.now(); connPill();
   const sumBal=s.accounts.reduce((x,a)=>x+(a.balance||0),0);
   const sumEq=s.accounts.reduce((x,a)=>x+(a.equity||0),0);
   const flt=sumEq-sumBal;
@@ -337,19 +393,28 @@ async function tick(){
     const af=a.equity-a.balance, tgt=a.target||0, d=a.balance-tgt;
     const w=a.weight!=null?(a.weight*100).toFixed(1)+'%':'reserve';
     const dot=a.stale?'stale':(a.no_data?'nodata':'ok'), dtt=a.stale?'no contact (stale)':(a.no_data?'alive, awaiting telemetry':'live');
-    const tm=a.terminal?`${a.terminal.tn||''}${a.terminal.login?' · #'+a.terminal.login:''}`:'';
-    const sub=(tm?tm+' · ':'')+'w '+w;
+    const tt=a.terminal||{}, strat=tt.strategy||'';
+    const nm=(tt.tn?tt.tn+' — ':'')+a.name;                       // "T1 — 161611609"
+    const sub=(a.weight==null?'reserve hub':(strat?strat+' · ':'')+'w '+w)
+             +(a.stale?` · <span class="neg">seen ${ago(a.age_s)} ago</span>`:'');
     const fcl=Math.abs(af)<0.005?'mut':(af>=0?'pos':'neg'), dcl=Math.abs(d)<0.005?'mut':(d>=0?'pos':'neg');
-    if(!a.is_open) closing.delete(a.name);
-    const cc=(CLOSE_ENABLED&&a.is_open)?(closing.has(a.name)
-        ?'<span class="mut" style="margin-left:8px;font-size:11px">closing…</span>'
-        :`<button class="xbtn" data-acct="${a.name}">✕ close</button>`):'';
-    return `<tr>
-      <td><span class="nm"><span class="dot ${dot}" title="${dtt}"></span>${a.name}</span><div class="tm">${sub}</div></td>
-      <td><span class="badge ${a.is_open?'open':'flat'}">${a.is_open?'OPEN':'flat'}</span>${cc}</td>
+    const badge=a.is_open
+      ?`<span class="badge ${a.dir>0?'long':a.dir<0?'short':'open'}" title="open R = floating / 1R">`
+        +(a.dir>0?'▲ long':a.dir<0?'▼ short':'OPEN')+(a.stack>1?' ×'+a.stack:'')+'</span>'
+      :'<span class="badge flat">flat</span>';
+    const openR=(a.is_open&&a.open_r)?` <span class="${a.open_r>=0?'pos':'neg'}" style="font-size:11px">${(a.open_r>=0?'+':'')+a.open_r.toFixed(2)}R</span>`:'';
+    const tt2=a.terminal||{};
+    const tctl=(tt2.terminal_path?(
+        `<button class="xbtn" data-topen="${a.name}" title="Open terminal (relaunch EA)">▶</button>`
+       +`<button class="xbtn" data-tclose="${a.name}" title="Close terminal — halt this leg">⏻</button>`
+       +(a.is_open?`<button class="xbtn" data-flat="${a.name}" title="Close all open trades">✕</button>`:'')):'')
+       +`<button class="xbtn" data-edit="${a.name}" title="Edit account (strategy, weight, terminal…)">✎</button>`;
+    return `<tr${a.stale?' class="stale-row"':''}>
+      <td><span class="nm"><span class="dot ${dot}" title="${dtt}"></span>${nm}</span><div class="tm">${sub}</div></td>
+      <td>${badge}${tctl}</td>
       <td class="num">${money(a.balance)}</td>
       <td class="num">${money(a.equity)}</td>
-      <td class="num ${fcl}">${(af>=0?'+':'-')+money(Math.abs(af))}</td>
+      <td class="num ${fcl}">${(af>=0?'+':'-')+money(Math.abs(af))}${openR}</td>
       <td class="num">${money(tgt)}</td>
       <td class="num ${dcl}">${(d>=0?'+':'-')+money(Math.abs(d))}</td></tr>`;
   }).join('');
@@ -371,8 +436,12 @@ async function tick(){
   // ---- derive alerts ----
   const alerts=[];
   (s.pending_transfers||[]).forEach(t=>{ alerts.push({msg:`Transfer: move ${money(t.amount)} ${t.src}→${t.dst} (${t.reason})`}); });
-  const nowStale=new Set(s.accounts.filter(a=>a.stale).map(a=>a.name));
-  s.accounts.filter(a=>a.stale).forEach(a=>alerts.push({msg:`${a.terminal?a.terminal.tn+' ':''}${a.name} DOWN (stale heartbeat)`,crit:true}));
+  const staleLegs=s.accounts.filter(a=>a.stale);
+  const nowStale=new Set(staleLegs.map(a=>a.name));
+  if(staleLegs.length && staleLegs.length===s.accounts.length){   // full outage: one alert, not 7
+    const oldest=Math.min(...staleLegs.map(a=>a.age_s??Infinity));
+    alerts.push({msg:`ALL ${s.accounts.length} legs stale — collector or terminals down; data is ${ago(oldest)} old (trading unaffected)`,crit:true});
+  } else staleLegs.forEach(a=>alerts.push({msg:`${a.terminal?a.terminal.tn+' ':''}${a.name} DOWN (stale · seen ${ago(a.age_s)} ago)`,crit:true}));
   if(s.halted) alerts.push({msg:`CIRCUIT BREAKER — DD ${(s.drawdown*100).toFixed(1)}%. New ops halted.`,crit:true});
   // beep only on NEW actionable events (avoid nagging every 3s)
   if(!firstStatus){
@@ -518,12 +587,19 @@ $('btnResume').onclick=()=>modal('Resume trading?','Clears the breaker and reset
 $('btnLogout').onclick=async()=>{ try{await fetch('/logout',{method:'POST'})}catch(_){}; location.href='/login'; };
 
 // ---- per-leg manual flatten (delegated; survives the per-tick tbody rebuild) ----
-$('acctTbl').addEventListener('click',e=>{
+$('acctTbl').addEventListener('click',async e=>{
   const b=e.target.closest('.xbtn'); if(!b) return;
-  const acct=b.dataset.acct;
-  modal('Close all open positions?',
-    `<p class="mut">Flatten <b>${acct}</b> now — close every open position on this leg and realize its current P&amp;L immediately. Picked up on the leg's next heartbeat. The leg can still re-arm on the next signal; use <b>Halt</b> to stop new ops.</p>`,
-    ()=>{ closing.add(acct); return fetch('/close/'+encodeURIComponent(acct),{method:'POST'}); });
+  const open=b.dataset.topen, close=b.dataset.tclose, flat=b.dataset.flat, ed=b.dataset.edit;
+  if(ed){ const d=await (await fetch('/legs')).json(); const row=(d.legs||[]).find(x=>x.login===ed); openAcctForm(row||{login:ed}); return; }
+  if(open) modal('Open terminal?',
+    `<p class="mut">Launch the terminal for <b>${open}</b> — MT5 auto-logs-in and re-attaches the EA. Resumes trading on this leg.</p>`,
+    ()=>fetch('/terminal/'+encodeURIComponent(open)+'/open',{method:'POST'}));
+  else if(close) modal('Close terminal — halt this leg?',
+    `<p class="mut">Kill the terminal for <b>${close}</b>. Its EA stops immediately — <b>no new trades</b>. Open positions stay until you flatten (✕) or their SL hits. This is the decoupled halt.</p>`,
+    ()=>fetch('/terminal/'+encodeURIComponent(close)+'/close',{method:'POST'}));
+  else if(flat) modal('Close all trades?',
+    `<p class="mut">Flatten every open position on <b>${flat}</b> now, via the terminal's own session. Does not block re-entry — use ⏻ to halt the leg.</p>`,
+    ()=>fetch('/flatten/'+encodeURIComponent(flat),{method:'POST'}));
 });
 
 // ---- balance-vs-target leg filter (chips toggle legs in/out of that chart only) ----
@@ -543,8 +619,11 @@ async function loadSettings(){
   curSet=await (await fetch('/settings')).json();
   $('setForm').innerHTML=DIALS.map(([k,lab,st])=>
     `<div class="set-row"><label>${lab}</label><input id="s_${k}" type="number" step="${st}" value="${curSet[k]}"></div>`).join('');
-  $('setWeights').innerHTML=Object.entries(curSet.weights).map(([k,v])=>
-    `<div class="set-row"><label>${k}</label><input id="w_${k}" type="number" step=".001" min="0" value="${v}"></div>`).join('');
+  const lm=curSet.legmeta||{};
+  $('setWeights').innerHTML=Object.entries(curSet.weights).map(([k,v])=>{
+    const m=lm[k]||{}, lab=(m.tn?m.tn+' · ':'')+(m.strategy||k);   // "T1 · XAU_H4_align"
+    return `<div class="set-row"><label title="#${k}">${lab}</label><input id="w_${k}" type="number" step=".001" min="0" value="${v}"></div>`;
+  }).join('');
 }
 function collectSettings(){
   const body={weights:{}};
@@ -569,6 +648,43 @@ $('btnPreview').onclick=async()=>{
     xfers,
     async()=>{ const r=await fetch('/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       if(r.ok){ await loadSettings(); } else { alert('Apply failed: '+r.status); } });
+};
+
+// ---- account / terminal management (add / edit / remove — live, no restart) ----
+let editingLogin=null, editingRole='ops';
+function openAcctForm(row){
+  const isEdit=!!(row&&row.login&&row.role!==undefined);
+  row=row||{};
+  editingLogin=isEdit?String(row.login):null;
+  editingRole=row.role||'ops';
+  $('acctTitle').textContent=isEdit?('Edit account #'+row.login):'Add account';
+  $('f_tn').value=row.tn||''; $('f_login').value=row.login||''; $('f_login').disabled=isEdit;
+  $('f_server').value=row.server||''; $('f_symbol').value=row.symbol||'';
+  $('f_strategy').value=row.strategy||''; $('f_weight').value=(row.weight!=null?row.weight:'');
+  $('f_term').value=row.terminal_path||''; $('f_cents').checked=(row.cents!=null?!!row.cents:true);
+  $('f_pw').value='';   // never prefill a password
+  $('f_pw').placeholder=isEdit?(row.has_password?'set — leave blank to keep current':'not set — add to enable polling'):'required so the collector can read it';
+  $('f_remove').style.display=(isEdit&&editingRole!=='main')?'inline-block':'none';
+  $('acctModal').classList.add('show');
+}
+$('btnAddAcct').onclick=()=>openAcctForm(null);
+$('f_cancel').onclick=()=>$('acctModal').classList.remove('show');
+$('f_save').onclick=async()=>{
+  const login=$('f_login').value.trim();
+  if(!login){ alert('account login # is required'); return; }
+  const body={login, tn:$('f_tn').value.trim(), server:$('f_server').value.trim(), role:editingRole,
+    weight:parseFloat($('f_weight').value)||0, strategy:$('f_strategy').value.trim(),
+    symbol:$('f_symbol').value.trim(), cents:$('f_cents').checked, terminal_path:$('f_term').value.trim()};
+  const pw=$('f_pw').value; if(pw) body.password=pw;   // only send if entered (blank on edit keeps current)
+  const r=await fetch('/legs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.ok){ $('acctModal').classList.remove('show'); tick(); loadSettings(); }
+  else { const e=await r.json().catch(()=>({detail:r.status})); alert('Save failed: '+(e.detail||r.status)); }
+};
+$('f_remove').onclick=async()=>{
+  if(!editingLogin || !confirm('Remove account #'+editingLogin+' from the roster? (does not touch the account at the broker)')) return;
+  const r=await fetch('/legs/'+encodeURIComponent(editingLogin),{method:'DELETE'});
+  if(r.ok){ $('acctModal').classList.remove('show'); tick(); loadSettings(); }
+  else alert('Remove failed: '+r.status);
 };
 
 // ---- loops ----

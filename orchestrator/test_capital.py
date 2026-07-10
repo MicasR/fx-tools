@@ -1,10 +1,15 @@
 """Offline unit tests for the capital/rebalance/breaker brain (no I/O, no MT5).
 Run: python -m orchestrator.test_capital   (from repo root)
-Covers SYSTEM_PLAN.md Phase B/C exit: targets, sweeps, top-ups, open-op lock, breaker."""
-from orchestrator.config import Config, MAIN
+Covers SYSTEM_PLAN.md Phase B/C exit: targets, sweeps, top-ups, open-op lock, breaker.
+Accounts are keyed by MT5 login now; legs are picked from the seed roster by rank, not by name."""
+from orchestrator.config import Config
 from orchestrator.capital import Account, targets, plan_transfers, total_equity, Breaker
 
 cfg = Config(f_total=0.10, breaker_dd=0.35, min_transfer=0.50)   # f_total=10% for clear numbers
+MAIN = cfg.main                                   # reserve account login (was the "Main" sentinel)
+big = cfg.legs[0]                                  # biggest ops leg (align, w=0.33)
+sweeper = cfg.legs[1]                              # second leg (engulf, w=0.31) — used for the win
+loser = cfg.legs[3]                               # a mid leg (keltner-H4, w=0.10, target 10) — the loss
 P = []
 
 
@@ -27,29 +32,29 @@ a = at_target(1000.0)
 ops_sum = sum(a[l.account].balance for l in cfg.legs)
 chk("ops targets sum = F_total*T (0.10*1000=100)", abs(ops_sum - 100.0) < 0.5)
 chk("Main reserve = T*(1-F_total) (~900)", abs(a[MAIN].balance - 900.0) < 0.5)
-chk("biggest leg = XAU_H4_align (33%*100=33.0)", abs(a["XAU_H4_align"].balance - 33.0) < 0.5)
+chk(f"biggest leg {big.strategy} = 33%*100 = 33.0", abs(a[big.account].balance - 33.0) < 0.5)
 chk("at target -> no transfers", len(plan_transfers(a, cfg)) == 0)
 
 print("== win -> sweep to Main ==")
 a = at_target(1000.0)
-a["XAU_H4_engulf"].balance += 20.0; a["XAU_H4_engulf"].equity += 20.0   # won, flat
+a[sweeper.account].balance += 20.0; a[sweeper.account].equity += 20.0   # won, flat
 tr = plan_transfers(a, cfg)
-sweep = [t for t in tr if t.src == "XAU_H4_engulf" and t.dst == MAIN and t.reason == "sweep"]
+sweep = [t for t in tr if t.src == sweeper.account and t.dst == MAIN and t.reason == "sweep"]
 chk("won flat leg -> a sweep to Main", len(sweep) == 1 and sweep[0].amount > 0)
 
 print("== loss -> Main tops up ==")
 a = at_target(1000.0)
-a["XAU_H1_don55"].balance -= 5.0; a["XAU_H1_don55"].equity -= 5.0          # lost, flat
+a[loser.account].balance -= 5.0; a[loser.account].equity -= 5.0          # lost, flat
 tr = plan_transfers(a, cfg)
-topup = [t for t in tr if t.dst == "XAU_H1_don55" and t.src == MAIN and t.reason == "topup"]
+topup = [t for t in tr if t.dst == loser.account and t.src == MAIN and t.reason == "topup"]
 chk("lost flat leg -> a top-up from Main", len(topup) == 1 and topup[0].amount > 0)
 
 print("== open-op LOCK ==")
 a = at_target(1000.0)
-a["XAU_H1_don55"].balance -= 5.0; a["XAU_H1_don55"].equity -= 5.0
-a["XAU_H1_don55"].is_open = True                                      # locked
+a[loser.account].balance -= 5.0; a[loser.account].equity -= 5.0
+a[loser.account].is_open = True                                      # locked
 tr = plan_transfers(a, cfg)
-chk("open leg is never touched", all(t.src != "XAU_H1_don55" and t.dst != "XAU_H1_don55" for t in tr))
+chk("open leg is never touched", all(t.src != loser.account and t.dst != loser.account for t in tr))
 
 print("== transfer lag safety (Main can't overdraw) ==")
 a = at_target(1000.0)

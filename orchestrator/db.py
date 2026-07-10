@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS events (             -- ops/transfers/alerts/breaker 
 CREATE TABLE IF NOT EXISTS settings (           -- live, owner-tunable config overrides (war room)
   key TEXT PRIMARY KEY, value REAL, updated_ts REAL
 );
+CREATE TABLE IF NOT EXISTS legs (               -- roster registry (login-keyed); dashboard-managed
+  login TEXT PRIMARY KEY, tn TEXT, server TEXT, role TEXT, weight REAL,
+  strategy TEXT, symbol TEXT, cents INTEGER, enabled INTEGER,
+  terminal_path TEXT, added_ts REAL
+);
 """
 
 
@@ -97,3 +102,44 @@ class DB:
             "INSERT INTO settings(key,value,updated_ts) VALUES(?,?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=?,updated_ts=?",
             (key, value, time.time(), value, time.time())); self.cx.commit()
+
+    # ---- roster registry (login-keyed; the dashboard-managed source of truth) -----------------
+    def legs_all(self):
+        """All registry rows (ops + reserve, enabled + disabled), reserve last, biggest weight first."""
+        return [dict(r) for r in self.cx.execute(
+            "SELECT * FROM legs ORDER BY (role='main'), weight DESC, tn")]
+
+    def leg_upsert(self, login, tn="", server="", role="ops", weight=0.0, strategy="",
+                   symbol="", cents=1, enabled=1, terminal_path=""):
+        """Insert or update one registry row. added_ts is set once (kept on update)."""
+        self.cx.execute(
+            "INSERT INTO legs(login,tn,server,role,weight,strategy,symbol,cents,enabled,"
+            "terminal_path,added_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(login) DO UPDATE SET tn=excluded.tn,server=excluded.server,"
+            "role=excluded.role,weight=excluded.weight,strategy=excluded.strategy,"
+            "symbol=excluded.symbol,cents=excluded.cents,enabled=excluded.enabled,"
+            "terminal_path=excluded.terminal_path",
+            (str(login), tn, server, role, float(weight), strategy, symbol,
+             int(bool(cents)), int(bool(enabled)), terminal_path, time.time())); self.cx.commit()
+
+    def leg_remove(self, login):
+        self.cx.execute("DELETE FROM legs WHERE login=?", (str(login),)); self.cx.commit()
+
+    def leg_set_weight(self, login, weight):
+        self.cx.execute("UPDATE legs SET weight=? WHERE login=?", (float(weight), str(login)))
+        self.cx.commit()
+
+    def leg_set_enabled(self, login, enabled):
+        self.cx.execute("UPDATE legs SET enabled=? WHERE login=?", (int(bool(enabled)), str(login)))
+        self.cx.commit()
+
+    def seed_legs(self, rows):
+        """Populate the registry ONLY if empty — idempotent first-run seed."""
+        if self.cx.execute("SELECT COUNT(*) FROM legs").fetchone()[0]:
+            return
+        for r in rows:
+            self.leg_upsert(r["login"], tn=r.get("tn", ""), server=r.get("server", ""),
+                            role=r.get("role", "ops"), weight=r.get("weight", 0.0),
+                            strategy=r.get("strategy", ""), symbol=r.get("symbol", ""),
+                            cents=r.get("cents", True), enabled=r.get("enabled", True),
+                            terminal_path=r.get("terminal_path", ""))

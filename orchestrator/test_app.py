@@ -1,6 +1,7 @@
 """End-to-end integration test: synthetic telemetry through the REAL FastAPI app + SQLite.
 Verifies SYSTEM_PLAN Phase C exit ('end-to-end on synthetic telemetry: targets, transfers,
-alerts, dashboard correct'). Run: python -m orchestrator.test_app  (from repo root)."""
+alerts, dashboard correct'). Run: python -m orchestrator.test_app  (from repo root).
+Accounts are keyed by MT5 login; legs are referenced from the seed roster by rank."""
 import os
 os.environ["CK_TEST"] = "1"
 # Use a throwaway DB (never the live state.db) — app.py honors CK_DB. Safe to run on the live box.
@@ -13,6 +14,9 @@ from fastapi.testclient import TestClient
 from orchestrator import app as A
 
 A.cfg.f_total = 0.10                               # clear numbers
+MAIN = A.cfg.main                                  # reserve account login
+BIG = A.cfg.legs[0].account                        # biggest ops leg (login) — target 33.0
+SW = A.cfg.legs[1].account                         # second ops leg — used for the win/sweep
 client = TestClient(A.app)
 P = []
 
@@ -34,51 +38,51 @@ T0 = 1000.0
 tg = {l.account: l.weight * 0.10 * T0 for l in A.cfg.legs}
 for l in A.cfg.legs:
     tele(l.account, round(tg[l.account], 2))
-tele("Main", round(T0 - sum(tg.values()), 2))
+tele(MAIN, round(T0 - sum(tg.values()), 2))
 
 st = client.get("/status").json()
 chk("status T ~= 1000", abs(st["T"] - 1000) < 1.0)
 chk("not halted at start", st["halted"] is False)
 chk("no pending transfers on-target", len(st["pending_transfers"]) == 0)
-chk("biggest target = XAU_H4_align ~33.0", any(abs(a["target"] - 33.0) < 0.6
-    and a["name"] == "XAU_H4_align" for a in st["accounts"]))
+chk("biggest target ~33.0 on the biggest-weight leg", any(abs(a["target"] - 33.0) < 0.6
+    and a["name"] == BIG for a in st["accounts"]))
 
 # a leg wins (flat, balance above target) -> orchestrator should emit a sweep to Main
-r = tele("XAU_H4_engulf", round(tg["XAU_H4_engulf"] + 25, 2))
+r = tele(SW, round(tg[SW] + 25, 2))
 chk("telemetry returns halt flag + T", "halt" in r and "T" in r)
 st = client.get("/status").json()
-sweep = [t for t in st["pending_transfers"] if t["src"] == "XAU_H4_engulf" and t["reason"] == "sweep"]
-chk("win -> pending sweep engulf -> main", len(sweep) == 1)
+sweep = [t for t in st["pending_transfers"] if t["src"] == SW and t["reason"] == "sweep"]
+chk("win -> pending sweep leg -> main", len(sweep) == 1)
 
-# simulate executing that sweep in Exness: the engulf leg back to target, Main now holds the +25.
+# simulate executing that sweep in Exness: the leg back to target, Main now holds the +25.
 # next telemetry must reconcile the pending instruction out (it is no longer needed).
-tele("XAU_H4_engulf", round(tg["XAU_H4_engulf"], 2))
-tele("Main", round(T0 - sum(tg.values()) + 25, 2))
+tele(SW, round(tg[SW], 2))
+tele(MAIN, round(T0 - sum(tg.values()) + 25, 2))
 st = client.get("/status").json()
 chk("executed transfer -> reconciled out of pending",
-    not any(t["src"] == "XAU_H4_engulf" and t["reason"] == "sweep" for t in st["pending_transfers"]))
+    not any(t["src"] == SW and t["reason"] == "sweep" for t in st["pending_transfers"]))
 
 # op close records an immutable R-stream row
-client.post("/op_close", json=dict(account="XAU_H4_engulf", realized_r=2.5, positions=4,
+client.post("/op_close", json=dict(account=SW, realized_r=2.5, positions=4,
             reason="TP", close_time=1.0))
 st = client.get("/status").json()
-chk("op_close -> rstream has the row", any(o["account"] == "XAU_H4_engulf" and
+chk("op_close -> rstream has the row", any(o["account"] == SW and
     abs(o["realized_r"] - 2.5) < 1e-6 for o in st["rstream"]))
 
 # control flag fail-open; manual halt/resume
-chk("control flag halt=False initially", client.get("/control/btc-nb-2").json()["halt"] is False)
+chk("control flag halt=False initially", client.get("/control/anyleg").json()["halt"] is False)
 client.post("/halt")
-chk("manual /halt -> control halt=True", client.get("/control/btc-nb-2").json()["halt"] is True)
+chk("manual /halt -> control halt=True", client.get("/control/anyleg").json()["halt"] is True)
 client.post("/resume")
-chk("manual /resume -> halt=False", client.get("/control/btc-nb-2").json()["halt"] is False)
+chk("manual /resume -> halt=False", client.get("/control/anyleg").json()["halt"] is False)
 
 # circuit breaker via telemetry: crater equity > 35% from peak
 for l in A.cfg.legs:
     tele(l.account, 1.0, eq=1.0)
-tele("Main", 1.0, eq=1.0)
+tele(MAIN, 1.0, eq=1.0)
 chk("breaker trips on >35% equity crater", client.get("/status").json()["halted"] is True)
 
-# performance metrics report (one op_close happened above: XAU_H4_engulf R=2.5)
+# performance metrics report (one op_close happened above: SW leg R=2.5)
 m = client.get("/metrics").json()
 chk("/metrics has combined + per_leg", "combined" in m and "per_leg" in m)
 chk("/metrics counts the closed op", m["combined"]["trades"] == 1 and abs(m["combined"]["net_r"] - 2.5) < 1e-6)
@@ -86,15 +90,15 @@ chk("/metrics counts the closed op", m["combined"]["trades"] == 1 and abs(m["com
 # live settings: dry_run must NOT mutate; apply must shift weights + persist
 g = client.get("/settings").json()
 chk("/settings exposes weights + dials", "weights" in g and "f_total" in g)
-w0 = g["weights"]["XAU_H4_align"]
+w0 = g["weights"][BIG]
 body = dict(f_total=g["f_total"], breaker_dd=g["breaker_dd"], min_transfer=g["min_transfer"],
             heartbeat_timeout_s=g["heartbeat_timeout_s"],
-            weights={k: (0.5 if k == "XAU_H4_align" else 0.1) for k in g["weights"]})
+            weights={k: (0.5 if k == BIG else 0.1) for k in g["weights"]})
 dry = client.post("/settings?dry_run=1", json=body).json()
 chk("dry_run returns preview + leaves live config unchanged",
-    "preview" in dry and abs(client.get("/settings").json()["weights"]["XAU_H4_align"] - w0) < 1e-9)
+    "preview" in dry and abs(client.get("/settings").json()["weights"][BIG] - w0) < 1e-9)
 client.post("/settings", json=body)
-chk("apply raises align weight", client.get("/settings").json()["weights"]["XAU_H4_align"] > w0)
+chk("apply raises the biggest-leg weight", client.get("/settings").json()["weights"][BIG] > w0)
 bad = dict(body); bad["f_total"] = 1.5
 chk("invalid f_total -> 400", client.post("/settings", json=bad).status_code == 400)
 

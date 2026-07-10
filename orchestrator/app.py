@@ -11,15 +11,19 @@ import secrets
 from fastapi import FastAPI, Response, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
-from .config import DEFAULT, MAIN
+from .config import DEFAULT
 from .capital import Account, targets, plan_transfers, total_equity, Breaker
 from .db import DB
 from .metrics import compute as compute_metrics
+from . import terminalctl
+from . import secretstore
 
 cfg = DEFAULT
 db = DB(os.environ.get("CK_DB", "orchestrator/state.db"))   # CK_DB lets tests use a throwaway DB
+cfg.load_registry(db)                                 # authoritative roster from the registry (seeds first run)
 cfg.apply_overrides(db.get_settings())                # restore owner's persisted live settings
 breaker = Breaker()
+_was_halted = False           # tracks the breaker's halt edge (fire auto-close once per trip)
 _START = time.time()
 CLOSE_CMD = {}                # in-memory per-account one-shot "flatten now" command (war room)
 CLOSE_TTL_S = 90             # auto-expire an unacked close so it can't fire on a later EA restart
@@ -167,6 +171,19 @@ class OpClose(BaseModel):
     close_time: float = 0.0
 
 
+def _breaker_close_all():
+    """Best-effort decoupled halt: close every registered leg's terminal on a breaker trip. Opt-in
+    (CK_BREAKER_CLOSE=1) so it can't surprise-kill terminals before it's validated on demo."""
+    for l in cfg.legs:
+        if not l.terminal_path:
+            continue
+        try:
+            terminalctl.close_terminal(l.terminal_path)
+            db.log("terminal", f"breaker CLOSE #{l.account} ({l.tn})")
+        except Exception as e:
+            db.log("terminal", f"breaker close #{l.account} failed: {e}")
+
+
 def _rebalance():
     """Recompute T + breaker, emit any new (deduped) pending transfers. Returns the plan.
     GUARD: act only on a COMPLETE picture -- if any account has never reported (warm-up) or
@@ -179,14 +196,18 @@ def _rebalance():
     if not warm:
         return T, 0.0, []
     halted, dd = breaker.update(T, cfg)
-    if halted:
-        db.log("breaker", f"HALT new ops: dd={dd:.1%} peakT={breaker.peak_T:.2f}")
+    global _was_halted
+    if halted and not _was_halted:                       # fire once on the False->True transition
+        db.log("breaker", f"HALT: dd={dd:.1%} peakT={breaker.peak_T:.2f}")
+        if os.environ.get("CK_BREAKER_CLOSE") == "1":    # opt-in: halt == close every terminal
+            _breaker_close_all()
+    _was_halted = halted
     # RECONCILE first: a pending transfer is fulfilled once its leg is back within min_transfer
     # of target (you executed it in Exness, or it's no longer needed). Confirm it so it clears
     # the dashboard and unblocks the dedup. Without this, instructions stay 'pending' forever.
     tg = targets(ACCT, cfg, T)
     for t in db.pending_transfers():
-        leg = t["dst"] if t["src"] == MAIN else t["src"]
+        leg = t["dst"] if t["src"] == cfg.main else t["src"]
         acc = ACCT.get(leg)
         if acc and not acc.is_open and abs(acc.balance - tg[leg]) <= cfg.min_transfer:
             db.confirm_transfer(t["id"])
@@ -216,6 +237,7 @@ def _ingest_telemetry(t: Telemetry):
     a = ACCT[t.account]
     bal, eq = cfg.to_usd(t.account, t.balance), cfg.to_usd(t.account, t.equity)  # USC -> USD
     a.balance, a.equity, a.is_open, a.last_hb = bal, eq, t.is_open, now
+    a.dir, a.stack, a.open_r = t.dir, t.stack, t.open_r
     db.upsert_account(t.account, bal, eq, t.is_open, now)
     db.add_telemetry(ts=now, account=t.account, symbol=t.symbol, balance=bal,
                      equity=eq, is_open=int(t.is_open), dir=t.dir, stack=t.stack,
@@ -313,7 +335,9 @@ def status():
         seen = a.last_seen()
         accts.append(dict(name=name, weight=cfg.weight(name), balance=round(a.balance, 2),
                           equity=round(a.equity, 2), target=round(tg[name], 2), is_open=a.is_open,
+                          dir=a.dir, stack=a.stack, open_r=round(a.open_r, 3),
                           stale=(now - seen > cfg.heartbeat_timeout_s) if seen else True,
+                          age_s=round(now - seen, 1) if seen else None,   # since last contact
                           no_data=(a.last_hb == 0),     # alive but never sent balance yet
                           terminal=cfg.terminal(name)))
     pending = db.pending_transfers()
@@ -374,6 +398,7 @@ def _settings_payload():
     return dict(f_total=cfg.f_total, breaker_dd=cfg.breaker_dd, min_transfer=cfg.min_transfer,
                 heartbeat_timeout_s=cfg.heartbeat_timeout_s, start_capital=cfg.start_capital,
                 weights={l.account: round(l.weight, 4) for l in cfg.legs},
+                legmeta={l.account: dict(tn=l.tn, strategy=l.strategy) for l in cfg.legs},
                 bounds=dict(f_total=[0.0, 1.0], breaker_dd=[0.0, 1.0],
                             min_transfer=[0.0, None], heartbeat_timeout_s=[30, None],
                             start_capital=[0.0, None]))
@@ -427,11 +452,122 @@ def post_settings(s: Settings, dry_run: int = 0):
     overrides = _validate(s)
     if dry_run:
         return dict(ok=True, preview=_preview(overrides))
-    for k, v in overrides.items():                      # persist (survives restart) then apply live
-        db.set_setting(k, v)
-    cfg.apply_overrides(overrides)
+    for k, v in overrides.items():
+        if k.startswith("weight_"):
+            db.leg_set_weight(k[len("weight_"):], v)    # weights are the registry's (single source of truth)
+        else:
+            db.set_setting(k, v)                         # scalar dials persist in settings
+    _reload_roster()                                    # rebuild legs from the registry (new weights) + dials
     db.log("settings", "f_total={f_total} breaker_dd={breaker_dd} min_transfer={min_transfer} "
            "heartbeat={heartbeat_timeout_s}".format(**overrides)
            + " weights=" + ",".join(f"{k[7:]}:{v:.3f}" for k, v in overrides.items()
                                      if k.startswith("weight_")))
     return dict(ok=True, applied=_settings_payload())
+
+
+# ---- roster registry (war room): register / remove / enable accounts LIVE, no restart ----------
+def _reload_roster():
+    """Rebuild the live roster from the DB registry (+ persisted scalar dials) and re-sync ACCT so
+    a just-registered account gets an in-memory slot (warm-started from the DB if seen before) and a
+    removed one is dropped. The capital brain reads cfg.legs/ACCT next tick — no restart."""
+    cfg.load_registry(db)
+    cfg.apply_overrides(db.get_settings())
+    seen = db.accounts()
+    for a in cfg.accounts:
+        if a not in ACCT:
+            r = seen.get(a)
+            ACCT[a] = (Account(a, r["balance"], r["equity"], bool(r["is_open"]), r["last_hb"])
+                       if r else Account(a))
+    for a in [a for a in ACCT if a not in cfg.accounts]:
+        del ACCT[a]
+
+
+class LegReg(BaseModel):
+    login: str
+    tn: str = ""
+    server: str = ""
+    role: str = "ops"                 # "ops" | "main" (the reserve hub)
+    weight: float = 0.0
+    strategy: str = ""                # swappable label (current preset/EA); not an identity
+    symbol: str = ""
+    cents: bool = True
+    terminal_path: str = ""
+    enabled: bool = True
+    password: str = ""                # the account's MT5 password for the collector; -> secrets.json
+                                      # (gitignored, never stored in the DB or returned by any API)
+
+
+@app.get("/legs")
+def list_legs():
+    """Full registry (incl. disabled) for the roster-management UI. Adds `has_password` (whether the
+    collector has creds to poll it) — the password itself is NEVER returned."""
+    legs = db.legs_all()
+    for l in legs:
+        l["has_password"] = secretstore.has_password(l["login"])
+    return {"legs": legs}
+
+
+@app.post("/legs")
+def register_leg(r: LegReg):
+    """Register a new account or update an existing one (upsert by login). Swapping the strategy on
+    an account is just an update here — the login identity and weight are untouched."""
+    login = r.login.strip()
+    if not login:
+        raise HTTPException(status_code=400, detail="login required")
+    if r.weight < 0:
+        raise HTTPException(status_code=400, detail="weight must be >= 0")
+    db.leg_upsert(login, tn=r.tn.strip(), server=r.server.strip(), role=r.role, weight=r.weight,
+                  strategy=r.strategy.strip(), symbol=r.symbol.strip(), cents=r.cents,
+                  enabled=r.enabled, terminal_path=r.terminal_path.strip())
+    if r.password:
+        secretstore.set_password(login, r.password)     # -> gitignored secrets.json (collector creds)
+    _reload_roster()
+    db.log("registry", f"register {r.tn or '-'} #{login} ({r.strategy or r.role})")
+    return list_legs() | dict(ok=True, accounts=cfg.accounts)
+
+
+@app.delete("/legs/{login}")
+def remove_leg(login: str):
+    db.leg_remove(login)
+    _reload_roster()
+    db.log("registry", f"remove #{login}")
+    return dict(ok=True, accounts=cfg.accounts, legs=db.legs_all())
+
+
+@app.post("/legs/{login}/enabled")
+def enable_leg(login: str, on: int = 1):
+    db.leg_set_enabled(login, bool(on))
+    _reload_roster()
+    db.log("registry", f"{'enable' if on else 'disable'} #{login}")
+    return dict(ok=True, enabled=bool(on), accounts=cfg.accounts, legs=db.legs_all())
+
+
+# ---- terminal control (war room): halt = close the terminal; open re-launches; flatten closes trades
+def _leg_path(login: str):
+    t = cfg.terminal(login)
+    path = t.get("terminal_path") if t else None
+    if not path:
+        raise HTTPException(status_code=404, detail=f"no terminal_path registered for #{login}")
+    return path
+
+
+@app.post("/terminal/{login}/open")
+def terminal_open(login: str):
+    """Launch the leg's terminal (auto-login + auto-attach EA). Un-halts a closed leg."""
+    db.log("terminal", f"OPEN #{login}")
+    return terminalctl.open_terminal(_leg_path(login))
+
+
+@app.post("/terminal/{login}/close")
+def terminal_close(login: str):
+    """Kill the leg's terminal process — the decoupled HALT: no more new trades on this leg."""
+    db.log("terminal", f"CLOSE #{login} (halt)")
+    return terminalctl.close_terminal(_leg_path(login))
+
+
+@app.post("/flatten/{login}")
+def flatten(login: str):
+    """Close all open trades on the leg, via the terminal's own authorized session (no trade creds)."""
+    import MetaTrader5 as mt5
+    db.log("terminal", f"FLATTEN #{login}")
+    return terminalctl.flatten_positions(mt5, _leg_path(login))
